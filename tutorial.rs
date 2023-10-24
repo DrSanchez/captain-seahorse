@@ -112,7 +112,6 @@ impl Ship {
         let time_to_target = target_distance / BULLET_SPEED;
         let lead = self.quadratic_lead(target, target_velocity());
         draw_line(position(), lead, 0xff0000);
-        draw_line(target, lead, 0x0000ff);
         let current_diff = angle_diff(heading(), (lead - position()).angle());
 
         // let last_known_position = positions.pop_front();
@@ -123,10 +122,6 @@ impl Ship {
         // let tracked_angular_velocity = (lead.y - target.y).atan2(lead.x - target.x) - (target.y - last_known_position.unwrap().y).atan2(target.x - last_known_position.unwrap().x) / (current_time() - TICK_LENGTH);
         // debug!("tracking angular velocity: {}", tracked_angular_velocity);
 
-        // note: using turn() 40,000 is the best so far
-        // 400,000 slows tracking down and seems to oscillate more
-        // 4,000 seems worse
-        // note: adding torque() dramatically changes things, needs its own c0 magnitude modifier
         if current_diff.abs() > 0.1 {
             let c0: f64 = 40.0;
             let c1: f64 = 2.0 * c0.sqrt();
@@ -134,7 +129,7 @@ impl Ship {
             let angular_acceleration: f64 = c0 * current_diff - c1 * angular_velocity();
             torque(angular_acceleration);
         } else {
-            let c0: f64 = 40_000.0;
+            let c0: f64 = 10_000.0;
             let c1: f64 = 2.0 * c0.sqrt();
 
             let angular_acceleration: f64 = c0 * current_diff - c1 * angular_velocity();
