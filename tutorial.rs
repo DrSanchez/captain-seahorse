@@ -82,7 +82,6 @@ impl Ship {
         // let c: f64 = (target_position.x - local_position.x).powf(2.0) + (target_position.y - local_position.y).powf(2.0);
 
         let t: f64 = self.get_smallest_quadratic_solution(a,b,c);
-        debug!("wtf is t: {}", t);
         if t <= 0.0 {
             return position();
         }
@@ -124,29 +123,22 @@ impl Ship {
         let tracked_angular_velocity = (lead.y - target.y).atan2(lead.x - target.x) - (target.y - last_known_position.unwrap().y).atan2(target.x - last_known_position.unwrap().x) / (current_time() - TICK_LENGTH);
         debug!("tracking angular velocity: {}", tracked_angular_velocity);
 
-        // let quadrant = self.which_quadrant(target);
-        match self.which_quadrant(target) {
-            1 => debug!("enemy in quadrant: {}", 1),
-            2 => debug!("enemy in quadrant: {}", 2),
-            3 => debug!("enemy in quadrant: {}", 3),
-            4 => debug!("enemy in quadrant: {}", 4),
-            _ => debug!("shouldnt get here"),
-        };
-
+        // note: using turn() 40,000 is the best so far
+        // 400,000 slows tracking down and seems to oscillate more
+        // 4,000 seems worse
+        // note: adding torque() dramatically changes things, needs its own c0 magnitude modifier
         if current_diff.abs() > 0.1 {
-            if current_diff > 0.0 {
-                torque(max_angular_acceleration());
-                turn(max_angular_acceleration());
-            } else {
-                torque(-max_angular_acceleration());
-                turn(-max_angular_acceleration());
-            }
+            let c0: f64 = 40.0;
+            let c1: f64 = 2.0 * c0.sqrt();
+
+            let angular_acceleration: f64 = c0 * current_diff - c1 * angular_velocity();
+            torque(angular_acceleration);
         } else {
-            if current_diff > 0.0 {
-                turn(-tracked_angular_velocity);
-            } else {
-                turn(tracked_angular_velocity);
-            }
+            let c0: f64 = 40_000.0;
+            let c1: f64 = 2.0 * c0.sqrt();
+
+            let angular_acceleration: f64 = c0 * current_diff - c1 * angular_velocity();
+            turn(angular_acceleration);
         }
 
         if debug {
