@@ -15,11 +15,15 @@ use std::collections::VecDeque;
 
 const BULLET_SPEED: f64 = 1000.0; // m/s
 const E: f64 = f64::EPSILON;
-pub struct Ship {}
+pub struct Ship {
+    target_lock: bool,
+}
 
 impl Ship {
     pub fn new() -> Ship {
-        Ship {}
+        Ship {
+            target_lock: false,
+        }
     }
 
     pub fn heading_to_target(&mut self, target: Vec2) {
@@ -104,13 +108,13 @@ impl Ship {
         }
     }
 
-    pub fn lead_target(&mut self, target: Vec2, debug: bool, mut positions: VecDeque<Vec2>) {
+    pub fn lead_target(&mut self, target: Vec2, target_velocity: Vec2, debug: bool, mut positions: VecDeque<Vec2>) {
         positions.push_back(target);
 
         let target_vector = target - position();
         let target_distance = target_vector.length();
         let time_to_target = target_distance / BULLET_SPEED;
-        let lead = self.quadratic_lead(target, target_velocity());
+        let lead = self.quadratic_lead(target, target_velocity);
         draw_line(position(), lead, 0xff0000);
         let current_diff = angle_diff(heading(), (lead - position()).angle());
 
@@ -141,7 +145,7 @@ impl Ship {
             debug!("target vector: {}", target_vector);
             debug!("time to target: {}", time_to_target);
             debug!("target: {}", target);
-            debug!("target_velocity: {}", target_velocity());
+            debug!("target_velocity: {}", target_velocity);
             debug!("lead: {}", lead);
             debug!("current diff: {}", current_diff);
             debug!("my heading: {}", heading());
@@ -150,10 +154,21 @@ impl Ship {
     }
 
     pub fn tick(&mut self) {
-        draw_line(position(), target(), 0x00ff00);
+        // draw_line(position(), target(), 0x00ff00);
         let mut positions: VecDeque<Vec2> = VecDeque::new();
-
-        self.lead_target(target(), true, positions);
-        fire(0);
+        set_radar_heading(heading());
+        // set_radar_width(PI / 4.0);
+        // set_radar_max_distance(3000.0);
+        // set_radar_min_distance(25.0);
+        debug!("ship.target_lock: {}", self.target_lock);
+        if let Some(contact) = scan() {
+            self.target_lock = true;
+            debug!("class: {:?}", contact.class);
+            self.lead_target(contact.position, contact.velocity, true, positions);
+            accelerate(0.1 * (contact.position - position()));
+            fire(0);
+        }
+        // self.lead_target(target(), true, positions);
+        // fire(0);
     }
 }
