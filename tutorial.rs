@@ -115,13 +115,13 @@ impl Ship {
         draw_line(target, lead, 0x0000ff);
         let current_diff = angle_diff(heading(), (lead - position()).angle());
 
-        let last_known_position = positions.pop_front();
-        if last_known_position == None {
-            debug!("last_known_position is None: {}", last_known_position.unwrap());
-            return;
-        }
-        let tracked_angular_velocity = (lead.y - target.y).atan2(lead.x - target.x) - (target.y - last_known_position.unwrap().y).atan2(target.x - last_known_position.unwrap().x) / (current_time() - TICK_LENGTH);
-        debug!("tracking angular velocity: {}", tracked_angular_velocity);
+        // let last_known_position = positions.pop_front();
+        // if last_known_position == None {
+        //     debug!("last_known_position is None: {}", last_known_position.unwrap());
+        //     return;
+        // }
+        // let tracked_angular_velocity = (lead.y - target.y).atan2(lead.x - target.x) - (target.y - last_known_position.unwrap().y).atan2(target.x - last_known_position.unwrap().x) / (current_time() - TICK_LENGTH);
+        // debug!("tracking angular velocity: {}", tracked_angular_velocity);
 
         // note: using turn() 40,000 is the best so far
         // 400,000 slows tracking down and seems to oscillate more
