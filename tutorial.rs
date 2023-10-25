@@ -1,3 +1,4 @@
+
 use oort_api::prelude::*;
 use std::collections::VecDeque;
 
@@ -34,6 +35,9 @@ impl ObjectTracking for Ship {
     }
 
     fn track_target(&self, engage: bool) {
+        if let None = self.target {
+            return;
+        }
         let lead = get_target_lead(self.target.clone().unwrap().position, self.target.clone().unwrap().velocity, true);
         if engage {
             draw_line(position(), lead, 0xff0000);
@@ -44,6 +48,10 @@ impl ObjectTracking for Ship {
     }
 
     fn radar_lock(&self, engage: bool) {
+        if let None = self.target {
+            return;
+        }
+        debug!("radar_lock: {}", engage);
         if engage {
             set_radar_heading(angle_diff(radar_heading(), (self.target.clone().unwrap().position - position()).angle()));
 
@@ -206,7 +214,6 @@ impl Ship {
 
         // debug!("ship.target_lock: {}", self.target_lock);
         if let Some(contact) = scan() {
-            debug!("class: {:?}", contact.class);
             self.set_tracking(true, Some(contact));
             self.radar_lock(true);
             self.track_target(true);
@@ -214,9 +221,10 @@ impl Ship {
             // let something = angle_diff(heading(), targ_heading);
             accelerate(0.1 * (self.get_target_position() - position()));
             fire(0);
+        } else {
+            self.radar_lock(false);
+            self.track_target(false);
         }
-        self.radar_lock(false);
-        self.track_target(false);
         // self.lead_target(target(), true, positions);
         // fire(0);
     }
