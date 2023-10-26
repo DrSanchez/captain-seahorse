@@ -20,6 +20,47 @@ trait ObjectTracking {
     fn radar_lock(&self, engage: bool);
 
     fn get_target_position(&self) -> Vec2;
+
+    fn get_target_distance(&self) -> f64;
+}
+
+enum Quadrant {
+    One = 1,
+    Two = 2,
+    Three = 3,
+    Four = 4,
+}
+
+trait UnitCircleQuadrant {
+    fn get_quadrant(&self) -> Quadrant;
+
+    fn get_relative_quadrant(&self, other: Vec2) -> Quadrant;
+}
+
+impl UnitCircleQuadrant for Vec2 {
+    fn get_quadrant(&self) -> Quadrant {
+        if self.x > 0.0 && self.y > 0.0 {
+            Quadrant::One
+        } else if self.x < 0.0 && self.y > 0.0 {
+            Quadrant::Two
+        } else if self.x < 0.0 && self.y < 0.0 {
+            Quadrant::Three
+        } else {
+            Quadrant::Four
+        }
+    }
+
+    fn get_relative_quadrant(&self, other: Vec2) -> Quadrant {
+        if self.x > other.x && self.y > other.y {
+            Quadrant::One
+        } else if self.x < other.x && self.y > other.y {
+            Quadrant::Two
+        } else if self.x < other.x && self.y < other.y {
+            Quadrant::Three
+        } else {
+            Quadrant::Four
+        }
+    }
 }
 
 impl ObjectTracking for Ship {
@@ -39,6 +80,7 @@ impl ObjectTracking for Ship {
             return;
         }
         let lead = get_target_lead(self.target.clone().unwrap().position, self.target.clone().unwrap().velocity, true);
+        // let lead = self.lead(self.target.clone().unwrap().position, self.target.clone().unwrap().velocity);
         if engage {
             draw_line(position(), lead, 0xff0000);
             turn_to_lead_target(lead);
@@ -53,23 +95,27 @@ impl ObjectTracking for Ship {
         }
         debug!("radar_lock: {}", engage);
         if engage {
-            set_radar_heading(angle_diff(radar_heading(), (self.target.clone().unwrap().position - position()).angle()));
+            let diff_to_radar_mark = angle_diff(radar_heading(), (self.target.clone().unwrap().position - position()).angle());
+            debug!("diff_to_radar_mark: {}", diff_to_radar_mark);
+            set_radar_heading((self.target.clone().unwrap().position - position()).angle());
 
             // focus radar on target
             set_radar_width(PI / 8.0);
             set_radar_max_distance(2000.0);
-            set_radar_min_distance(25.0);
+            set_radar_min_distance(250.0);
         } else {
             set_radar_heading(radar_heading() + radar_width());
 
             // set standard radar sweep
-            set_radar_width(PI / 2.0);
+            set_radar_width(PI / 4.0);
             set_radar_max_distance(5000.0);
             set_radar_min_distance(25.0);
         }
     }
 
     fn get_target_position(&self) -> Vec2 { self.target.clone().unwrap().position }
+
+    fn get_target_distance(&self) -> f64 { (self.target.clone().unwrap().position - position()).length() }
 }
 
 // discriminant is the part under the sqrt when solved for x
@@ -104,12 +150,6 @@ fn quadratic_lead(target_position: Vec2, target_velocity: Vec2) -> Vec2 {
     let b: f64 = 2.0 * target_position.dot(target_velocity);
     let c: f64 = target_position.dot(target_position);
 
-    // seems to be the same math as above, just done without explicit vector maths
-    // let local_position = position();
-    // let a: f64 = target_velocity.x.powf(2.0) + target_velocity.y.powf(2.0) - BULLET_SPEED.powf(2.0);
-    // let b: f64 = 2.0 * (target_velocity.x * (target_position.x - local_position.x) + target_velocity.y * (target_position.y - local_position.y));
-    // let c: f64 = (target_position.x - local_position.x).powf(2.0) + (target_position.y - local_position.y).powf(2.0);
-
     let t: f64 = get_smallest_quadratic_solution(a,b,c);
     if t <= 0.0 {
         return position();
@@ -136,21 +176,19 @@ fn get_target_lead(target: Vec2, target_velocity: Vec2, debug: bool) -> Vec2 {
     lead
 }
 
+fn calculate_angular_velocity(tune_factor: f64, angle_to_mark: f64) -> f64 {
+    let c1: f64 = 2.0 * tune_factor.sqrt();
+    tune_factor * angle_to_mark - c1 * angular_velocity()
+}
+
 fn turn_to_lead_target(lead: Vec2) {
     let current_diff = angle_diff(heading(), (lead - position()).angle());
-
+    // if closer turn differently
+    // if further, turn differentlyer
     if current_diff.abs() > 0.1 {
-        let c0: f64 = 40.0;
-        let c1: f64 = 2.0 * c0.sqrt();
-
-        let angular_acceleration: f64 = c0 * current_diff - c1 * angular_velocity();
-        torque(angular_acceleration);
+        torque(calculate_angular_velocity(40.0, current_diff));
     } else {
-        let c0: f64 = 10_000.0;
-        let c1: f64 = 2.0 * c0.sqrt();
-
-        let angular_acceleration: f64 = c0 * current_diff - c1 * angular_velocity();
-        turn(angular_acceleration);
+        turn(calculate_angular_velocity(10_000.0, current_diff));
     }
 }
 
@@ -183,24 +221,6 @@ impl Ship {
         return target_position + (t * target_velocity);
     }
 
-
-    // get unit circle quadrant id from object position
-    pub fn which_quadrant(&mut self, object: Vec2) -> u8 {
-        if object.x > 0.0 && object.y > 0.0 {
-            return 1;
-        } else if object.x < 0.0 && object.y > 0.0 {
-            return 2;
-        } else if object.x < 0.0 && object.y < 0.0 {
-            return 3;
-        } else if object.x > 0.0 && object.y < 0.0 {
-            return 4;
-        } else {
-            // should never see
-            return 0;
-        }
-    }
-
-
     pub fn lead(&mut self, target_position: Vec2, target_velocity: Vec2) -> f64 {
         let delta_position = target_position - position();
         let delta_velocity = target_velocity - velocity();
@@ -214,9 +234,12 @@ impl Ship {
 
         // debug!("ship.target_lock: {}", self.target_lock);
         if let Some(contact) = scan() {
+            let pos = contact.clone().position;
             self.set_tracking(true, Some(contact));
             self.radar_lock(true);
             self.track_target(true);
+            debug!("contact quadrant: {}", pos.get_quadrant() as i32);
+            debug!("contact relative quadrant: {}", pos.get_relative_quadrant(position()) as i32);
             // self.lead_target(contact.position, contact.velocity, true, positions);
             // let something = angle_diff(heading(), targ_heading);
             accelerate(0.1 * (self.get_target_position() - position()));
