@@ -147,7 +147,7 @@ impl ObjectTracking for Ship {
         if current_diff.abs() > 0.1 {
             torque(calculate_angular_velocity(69.0, current_diff));
         } else {
-            torque(calculate_angular_velocity(10_000.0, current_diff));
+            torque(calculate_angular_velocity(20_000.0, current_diff));
             fire(0);
         }
         // }
@@ -308,11 +308,12 @@ impl Ship {
             debug!("my position: {}", position());
 
             if dist < 500.0 {
-                accelerate(10.0 * (self.get_target_position() + position()));
+                // accelerate(10.0 * (self.get_target_position() + position()));
+                accelerate(Vec2::new(0.0, 0.0));
             } else if dist > 500.0 && dist < 1_000.0 {
-                accelerate(1_000.0 * (contact.velocity));
+                accelerate(100.0 * (contact.velocity));
             } else if dist > 1_000.0 {
-                accelerate(100_000.0 * (self.get_target_position() - position()));
+                accelerate(1_000.0 * (self.get_target_position() - position()));
             }
         } else {
             self.radar_lock(false);
