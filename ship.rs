@@ -5,29 +5,6 @@ use std::collections::VecDeque;
 const BULLET_SPEED: f64 = 1000.0; // m/s
 const E: f64 = f64::EPSILON;
 
-pub struct Ship {
-    target_lock: bool,
-    target: Option<ScanResult>,
-}
-
-trait ObjectTracking {
-    fn set_tracking(&mut self, tracking: bool, object: Option<ScanResult>);
-
-    fn abort_tracking(&mut self);
-
-    fn track_target(&self, engage: bool);
-
-    fn radar_lock(&self, engage: bool);
-
-    fn get_target_position(&self) -> Vec2;
-
-    fn get_target_distance(&self) -> f64;
-
-    fn standard_radar_sweep(&self);
- 
-    fn turn_to_lead_target(&self, lead: Vec2);
-}
-
 enum Quadrant {
     One = 1,
     Two = 2,
@@ -67,7 +44,65 @@ impl UnitCircleQuadrant for Vec2 {
     }
 }
 
-impl ObjectTracking for Ship {
+pub struct Ship {
+    target_lock: bool,
+    target: Option<ScanResult>,
+}
+
+trait RadarControl {
+    fn set_tracking(&mut self, tracking: bool, object: Option<ScanResult>);
+
+    fn abort_tracking(&mut self);
+
+    fn track_target(&self, engage: bool);
+
+    fn radar_lock(&self, engage: bool);
+
+    fn get_target_position(&self) -> Vec2;
+
+    fn get_target_distance(&self) -> f64;
+
+    fn standard_radar_sweep(&self);
+ 
+    fn turn_to_lead_target(&self, lead: Vec2);
+}
+
+trait FigherGeometry {
+    fn bandit_range(&self) -> f64;
+
+    fn angle_off_tail(&self) -> f64;
+
+    fn rate_of_closure(&self) -> f64;
+
+    fn bandit_heading(&self) -> f64;
+}
+
+enum PursuitGeometry {
+    Lag, Pure, Lead,
+}
+
+impl FigherGeometry for Ship {
+    fn bandit_range(&self) -> f64 {
+        (self.target.as_ref().unwrap().position - position()).length()
+    }
+
+    // TODO: implement
+    fn angle_off_tail(&self) -> f64 {
+        -1.0
+    }
+
+    // TODO: implement
+    fn rate_of_closure(&self) -> f64 {
+        -1.0
+    }
+
+    // TODO: implement
+    fn bandit_heading(&self) -> f64 {
+        -1.0
+    }
+}
+
+impl RadarControl for Ship {
     fn set_tracking(&mut self, tracking: bool, object: Option<ScanResult>) {
         self.target_lock = tracking;
         self.target = Some(ScanResult { ..object.unwrap() });
@@ -84,7 +119,7 @@ impl ObjectTracking for Ship {
         }
         // let lead = get_target_lead(self.target.clone().unwrap().position, self.target.clone().unwrap().velocity, true);
         // let lead = self.lead(self.target.clone().unwrap().position, self.target.clone().unwrap().velocity);
-        let lead_point = lead(self.target.clone().unwrap().position, self.target.clone().unwrap().velocity);
+        let lead_point = lead(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity);
         // let mut lead_point: Vec2 = quadratic_lead(self.target.clone().unwrap().position, self.target.clone().unwrap().velocity);
         // if lead_point == position() {
         //     lead_point = lead(self.target.clone().unwrap().position, self.target.clone().unwrap().velocity);
