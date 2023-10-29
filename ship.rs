@@ -129,13 +129,8 @@ impl RadarControl for Ship {
 
     fn radar_tracking(&self) {
         if self.target_lock {
-            debug!(
-                "performing radar tracking on target: {}",
-                self.target.as_ref().unwrap().position
-            );
             let target_distance = self.get_target_distance();
             let radar_heading = (self.get_target_direction()).angle();
-            debug!("target radar angle: {}", radar_heading);
             set_radar_heading(radar_heading);
 
             // focus radar on target
@@ -173,7 +168,6 @@ impl RadarControl for Ship {
     }
 
     fn standard_radar_sweep(&mut self) {
-        debug!("standard radar sweep");
         // if we've been looking for a while, look harder
         if self.radar.ticks_since_contact > 30 {
             self.set_state(ShipState::OutOfRadarRange);
@@ -194,10 +188,8 @@ impl RadarControl for Ship {
     }
 
     fn radar_scan(&mut self) {
-        debug!("radar scan method");
         // do scanning, found a contact if we enter block
         if let Some(contact) = scan() {
-            debug!("found target, doing stuff");
             // reset contact counter
             self.radar.ticks_since_contact = 0;
 
@@ -330,18 +322,121 @@ impl FigherGeometry for Ship {
             // accelerate(10.0 * (self.get_target_position() + position()));
             // close to target, just float, probably needs to be smarter here
             accelerate(0.0 * contact_direction);
-        } else if contact_distance > 500.0 && contact_distance < 1_000.0 {
+        } else if contact_distance > 500.0 && contact_distance < 1000.0 {
             // attempts to match contact motion for combat engagement
             accelerate(100.0 * (contact_velocity));
-        } else if contact_distance > 1_000.0 {
+        } else if contact_distance > 1000.0 {
             // refactored math from target_position - position to pre-calc'd variable of the same
             // need to change to a unit vector in the direction of the target to accelerate
             // back into optimal combat range
-            accelerate(1_000.0 * contact_direction);
+            accelerate(1000.0 * contact_direction);
         }
     }
 }
 
+impl Ship {
+    pub fn new() -> Ship {
+        Ship {
+            target_lock: false,
+            target: None,
+            state: ShipState::NoTarget,
+            radar: Radar {
+                ticks_since_contact: 0,
+                target_positions: None,
+            },
+        }
+    }
+
+    pub fn set_state(&mut self, state: ShipState) {
+        self.state = state;
+    }
+
+    pub fn get_state(&self) -> &ShipState {
+        &self.state
+    }
+
+    // TODO: improve no_target operations
+    // no_target might be the ship initializer
+    pub fn no_target(&mut self) {
+        // pick a random initial vector
+        let dir: Vec2 = Vec2::new(rand(-1.0, 1.0), rand(-1.0, 1.0));
+        debug!("random dir: {}", dir);
+        let mag = 4.20;
+        accelerate(dir * mag);
+
+        // set ship to searching for target
+        self.set_state(ShipState::Searching);
+    }
+
+    pub fn searching_for_target(&mut self) {
+        debug!("searching for target");
+
+        // look for a target
+    }
+
+    pub fn engaging_target(&mut self) {
+        debug!("engaging target");
+
+        self.engage_target();
+        self.basic_maneuver_to_target();
+    }
+
+    pub fn out_of_range_target(&mut self) {
+        debug!("target out of range, maneuver closer!");
+
+        // fly ship to target
+    }
+
+    pub fn out_of_radar_range(&mut self) {
+        debug!("extending radar to maximum distance!");
+
+        // fly ship somewhere
+    }
+
+    pub fn heading_to_target(&self, target: Vec2) {
+        // turns to target, will be behind a moving target
+        turn(angle_diff(heading(), (target - position()).angle()));
+    }
+
+    pub fn ship_control(&mut self) {
+        match self.get_state() {
+            ShipState::NoTarget => self.no_target(),
+            ShipState::Searching => self.searching_for_target(),
+            ShipState::Engaged => self.engaging_target(),
+            ShipState::OutOfTargetRange => self.out_of_range_target(),
+            ShipState::OutOfRadarRange => self.out_of_radar_range(),
+        }
+    }
+
+    pub fn tick(&mut self) {
+        // pseudo code for ship loop when target identified in radar scope
+        // check acquired target distance
+        // check for FoF tags (future)
+        // set radar to track ship in (less?) narrow window
+        // get ship to optimal firing range (determine)
+        // destroy target
+        // reset scanner to find next target
+        // adjust position to hunting patterns
+        self.radar_control();
+        self.ship_control();
+    }
+}
+
+// better but still sucks
+fn iterative_approximation(target_position: Vec2, target_velocity: Vec2) -> Vec2 {
+    let mut t: f64 = 0.0;
+    let mut iterations = 100;
+    while iterations > 0 {
+        let old_t: f64 = t;
+        t = ((target_position - position()) + (t * target_velocity)).length() / BULLET_SPEED;
+        if t - old_t < E {
+            break;
+        }
+        iterations = iterations - 1;
+    }
+
+    return target_position + (t * target_velocity);
+}
 // discriminant is the part under the sqrt when solved for x
 // d = b^2-4ac
 fn get_smallest_quadratic_solution(a: f64, b: f64, c: f64) -> f64 {
@@ -431,104 +526,4 @@ fn lead(target_position: Vec2, target_velocity: Vec2) -> Vec2 {
     let delta_velocity = target_velocity - velocity();
     let prediction = delta_position + delta_velocity * delta_position.length() / BULLET_SPEED;
     prediction
-}
-
-impl Ship {
-    pub fn new() -> Ship {
-        Ship {
-            target_lock: false,
-            target: None,
-            state: ShipState::NoTarget,
-            radar: Radar {
-                ticks_since_contact: 0,
-                target_positions: None,
-            },
-        }
-    }
-
-    pub fn set_state(&mut self, state: ShipState) {
-        self.state = state;
-    }
-
-    pub fn get_state(&self) -> &ShipState {
-        &self.state
-    }
-
-    // TODO: improve no_target operations
-    // no_target might be the ship initializer
-    pub fn no_target(&mut self) {
-        // pick a random initial vector
-        let dir: Vec2 = Vec2::new(rand(-1.0, 1.0), rand(-1.0, 1.0));
-        debug!("random dir: {}", dir);
-        let mag = 4.20;
-        accelerate(dir * mag);
-
-        // set ship to searching for target
-        self.set_state(ShipState::Searching);
-    }
-
-    pub fn searching_for_target(&mut self) {
-        debug!("searching for target");
-
-        // look for a target
-    }
-
-    pub fn engaging_target(&mut self) {
-        debug!("engaging target");
-
-        self.engage_target();
-        self.basic_maneuver_to_target();
-    }
-
-    pub fn out_of_range_target(&mut self) {
-        debug!("target out of range, maneuver closer!");
-
-        // fly ship to target
-    }
-
-    pub fn out_of_radar_range(&mut self) {
-        debug!("extending radar to maximum distance!");
-
-        // fly ship somewhere
-    }
-
-    pub fn heading_to_target(&self, target: Vec2) {
-        // turns to target, will be behind a moving target
-        turn(angle_diff(heading(), (target - position()).angle()));
-    }
-
-    // better but still sucks
-    pub fn iterative_approximation(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2 {
-        let mut t: f64 = 0.0;
-        let mut iterations = 100;
-        while iterations > 0 {
-            let old_t: f64 = t;
-            t = ((target_position - position()) + (t * target_velocity)).length() / BULLET_SPEED;
-            if t - old_t < E {
-                break;
-            }
-            iterations = iterations - 1;
-        }
-
-        return target_position + (t * target_velocity);
-    }
-
-    pub fn tick(&mut self) {
-        // pseudo code for ship loop when target identified in radar scope
-        // check acquired target distance
-        // check for FoF tags (future)
-        // set radar to track ship in (less?) narrow window
-        // get ship to optimal firing range (determine)
-        // destroy target
-        // reset scanner to find next target
-        // adjust position to hunting patterns
-        self.radar_control();
-        match self.get_state() {
-            ShipState::NoTarget => self.no_target(),
-            ShipState::Searching => self.searching_for_target(),
-            ShipState::Engaged => self.engaging_target(),
-            ShipState::OutOfTargetRange => self.out_of_range_target(),
-            ShipState::OutOfRadarRange => self.out_of_radar_range(),
-        }
-    }
 }
