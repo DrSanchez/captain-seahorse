@@ -206,9 +206,6 @@ impl RadarControl for Ship {
 }
 
 trait FigherGeometry {
-    // get range to mark
-    fn bandit_range(&self) -> f64;
-
     // returns angle off target's 6'o-clock position
     fn angle_off_tail(&self) -> f64;
 
@@ -221,6 +218,12 @@ trait FigherGeometry {
     // act upon target with deadly force
     fn engage_target(&self);
 
+    // time for ship to intercept target
+    fn time_to_intercept(&self) -> f64;
+
+    fn fly_to_mark(&self, mark: Vec2, pursuit_type: PursuitGeometry);
+
+    // TODO: improve the next two methods
     // turns ship to focus on target lead coordinates
     fn turn_to_lead_target(&self, lead: Vec2);
 
@@ -241,10 +244,6 @@ enum PursuitGeometry {
 }
 
 impl FigherGeometry for Ship {
-    fn bandit_range(&self) -> f64 {
-        (self.target.as_ref().unwrap().position - position()).length()
-    }
-
     // TODO: implement
     fn angle_off_tail(&self) -> f64 {
         -1.0
@@ -260,20 +259,32 @@ impl FigherGeometry for Ship {
         -1.0
     }
 
+    fn time_to_intercept(&self) -> f64 {
+        -1.0
+        // self
+    }
+
+    fn fly_to_mark(&self, mark: Vec2, pursuit_type: PursuitGeometry) {
+        match pursuit_type {
+            PursuitGeometry::Lag => {
+                debug!("fly slightly behind mark");
+            },
+            PursuitGeometry::Pure => {
+                debug!("fly directly to mark");
+            },
+            PursuitGeometry::Lead => {
+                debug!("fly slightly ahead of mark");
+            },
+        }
+    }
+
     // engage fighter geometry with target
     fn engage_target(&self) {
         if !self.target.is_none() {
             // let lead = get_target_lead(self.target.clone().unwrap().position, self.target.clone().unwrap().velocity, true);
             // let lead = self.lead(self.target.clone().unwrap().position, self.target.clone().unwrap().velocity);
-            let lead_point = lead(
-                self.target.as_ref().unwrap().position,
-                self.target.as_ref().unwrap().velocity,
-            );
-            draw_line(
-                self.target.as_ref().unwrap().position,
-                self.target.as_ref().unwrap().velocity,
-                0xffff00,
-            );
+            let lead_point = lead(self.target.as_ref().unwrap().position,self.target.as_ref().unwrap().velocity);
+            draw_line(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity, 0xffff00);
             // let mut lead_point: Vec2 = quadratic_lead(self.target.clone().unwrap().position, self.target.clone().unwrap().velocity);
             // if lead_point == position() {
             //     lead_point = lead(self.target.clone().unwrap().position, self.target.clone().unwrap().velocity);
@@ -324,7 +335,7 @@ impl FigherGeometry for Ship {
             accelerate(0.0 * contact_direction);
         } else if contact_distance > 500.0 && contact_distance < 1000.0 {
             // attempts to match contact motion for combat engagement
-            accelerate(100.0 * (contact_velocity));
+            accelerate(10.0 * (contact_velocity));
         } else if contact_distance > 1000.0 {
             // refactored math from target_position - position to pre-calc'd variable of the same
             // need to change to a unit vector in the direction of the target to accelerate
