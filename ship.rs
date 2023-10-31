@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 const BULLET_SPEED: f64 = 1000.0; // m/s
 const E: f64 = f64::EPSILON;
 
+#[derive(Debug)]
 enum Quadrant {
     One = 1,
     Two = 2,
@@ -30,6 +31,8 @@ impl UnitCircleQuadrant for Vec2 {
         }
     }
 
+    // returns relative quadrant of SELF compared to OTHER
+    // i.e. target_position.get_relative_quadrant(ship.position)
     fn get_relative_quadrant(&self, other: Vec2) -> Quadrant {
         if self.x > other.x && self.y > other.y {
             Quadrant::One
@@ -260,8 +263,10 @@ impl FigherGeometry for Ship {
     }
 
     fn time_to_intercept(&self) -> f64 {
-        -1.0
-        // self
+        let delta_position = position() - self.target.as_ref().unwrap().position;
+        let delta_velocity = velocity() - self.target.as_ref().unwrap().velocity;
+        // TODO: divide by delta velocity length or just my velocity?
+        delta_position.length() / velocity().length()
     }
 
     fn fly_to_mark(&self, mark: Vec2, pursuit_type: PursuitGeometry) {
@@ -324,15 +329,83 @@ impl FigherGeometry for Ship {
         if self.target.is_none() {
             return;
         }
-        let contact_distance = self.get_target_distance();
-        let contact_direction = self.get_target_direction();
-        let contact_velocity = self.get_target_velocity();
+        let contact_distance: f64 = self.get_target_distance();
+        let contact_direction: Vec2 = self.get_target_direction();
+        let contact_velocity: Vec2 = self.get_target_velocity();
+        let contact_position: Vec2 = self.get_target_position();
+        let contact_future = contact_position + (contact_velocity);
+        let contact_future_distance = (position() - contact_future).length();
+        let mut target_distance_increasing = false;
+
+        let tti = self.time_to_intercept();
+        debug!("time to intercept: {}", tti);
+
+        draw_line(position(), contact_future, 0xff0000);
+
+        if contact_future_distance > contact_distance {
+            // target moving relatively away
+            debug!("target distance increasing!");
+            target_distance_increasing = true;
+        } else {
+            // target moving relatively closer
+            debug!("target distance decreasing!");
+            target_distance_increasing = false;
+        }
+
+        let normal_vec = contact_direction.normalize();
+        debug!("contact direction: {}", contact_direction);
+        debug!("contact distance: {}", contact_distance);
+        debug!("contact future distance: {}", contact_future_distance);
+        debug!("contact normal_vec: {}", normal_vec);
+
+        let mut new_velocity: Vec2 = Vec2::new(0.0, 0.0);
+        let relative_quadrant = self.get_target_position().get_relative_quadrant(position());
+        debug!("target in relative quadrant {:?}!", relative_quadrant);
+
+        // check if ship is moving faster than target
+        if velocity().x.abs() > contact_velocity.x.abs() {
+            // amount of x to reduce by
+            new_velocity.x = velocity().x.abs() - contact_velocity.x.abs();
+        } else {
+            // amount of x to increase by
+            new_velocity.x = contact_velocity.x.abs() - velocity().x.abs();
+        }
+        if velocity().y.abs() > contact_velocity.y.abs() {
+            // amount of y to reduce by
+            new_velocity.y = velocity().y.abs() - contact_velocity.y.abs();
+        } else {
+            // amount of y to increase by
+            new_velocity.y = contact_velocity.y.abs() - velocity().y.abs();
+        }
+        // TODO: might be useful for quadrant specific logic?
+        // match self.get_target_position().get_relative_quadrant(position()) {
+        //     Quadrant::One => {
+        //         // x positive, y positive
+        //         debug!("target in relative quadrant 1!");
+        //     },
+        //     Quadrant::Two => {
+        //         // x negative, y positive
+        //         debug!("target in relative quadrant 2!");
+        //     },
+        //     Quadrant::Three => {
+        //         // x negative, y negative
+        //         debug!("target in relative quadrant 3!");
+        //     },
+        //     Quadrant::Four => {
+        //         // x positive, y negative
+        //         debug!("target in relative quadrant 4!");
+        //     },
+        // }
 
         // handle fighter moves based on distance to target
+        // current best ranges seem to be [0, 500], [500, 1000], [1000, +]
         if contact_distance < 500.0 {
-            // accelerate(10.0 * (self.get_target_position() + position()));
             // close to target, just float, probably needs to be smarter here
-            accelerate(0.0 * contact_direction);
+            if target_distance_increasing {
+                accelerate(10.0 * normal_vec);
+            } else {
+                accelerate(-10.0 * normal_vec);
+            }
         } else if contact_distance > 500.0 && contact_distance < 1000.0 {
             // attempts to match contact motion for combat engagement
             accelerate(10.0 * (contact_velocity));
@@ -340,7 +413,7 @@ impl FigherGeometry for Ship {
             // refactored math from target_position - position to pre-calc'd variable of the same
             // need to change to a unit vector in the direction of the target to accelerate
             // back into optimal combat range
-            accelerate(1000.0 * contact_direction);
+            accelerate(100.0 * normal_vec);
         }
     }
 }
@@ -372,7 +445,7 @@ impl Ship {
         // pick a random initial vector
         let dir: Vec2 = Vec2::new(rand(-1.0, 1.0), rand(-1.0, 1.0));
         debug!("random dir: {}", dir);
-        let mag = 4.20;
+        let mag = 42.20;
         accelerate(dir * mag);
 
         // set ship to searching for target
