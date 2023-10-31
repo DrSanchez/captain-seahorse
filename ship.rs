@@ -107,6 +107,8 @@ trait RadarControl {
     // returns x,y values as distance representation to target
     fn get_target_direction(&self) -> Vec2;
 
+    fn get_closing_speed_to_target(&self) -> f64;
+
     // scan contact handler
     fn radar_scan(&mut self);
 }
@@ -168,6 +170,10 @@ impl RadarControl for Ship {
 
     fn get_target_velocity(&self) -> Vec2 {
         self.target.as_ref().unwrap().velocity
+    }
+
+    fn get_closing_speed_to_target(&self) -> f64 {
+        -((self.get_target_velocity() - velocity()).dot(self.get_target_direction()) / self.get_target_distance())
     }
 
     fn standard_radar_sweep(&mut self) {
@@ -361,6 +367,10 @@ impl FigherGeometry for Ship {
         let mut new_velocity: Vec2 = Vec2::new(0.0, 0.0);
         let relative_quadrant = self.get_target_position().get_relative_quadrant(position());
         debug!("target in relative quadrant {:?}!", relative_quadrant);
+
+        let closing_speed = self.get_closing_speed_to_target();
+
+        debug!("closing speed: {}", closing_speed);
 
         // check if ship is moving faster than target
         if velocity().x.abs() > contact_velocity.x.abs() {
