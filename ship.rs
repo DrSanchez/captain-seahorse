@@ -113,6 +113,8 @@ trait RadarControl {
     // returns predicted Vec2 of target lead
     fn get_target_lead(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2;
 
+    fn get_angle_to_target(&self) -> f64;
+
     // scan contact handler
     fn radar_scan(&mut self);
 }
@@ -186,6 +188,16 @@ impl RadarControl for Ship {
         let prediction = delta_position + delta_velocity * delta_position.length() / BULLET_SPEED;
         prediction
     }
+
+    // TODO: broken af
+    fn get_angle_to_target(&self) -> f64 {
+        // let dir = self.get_target_lead(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity) - position();
+        let prediction_time: f64 = 1.0;
+        // experimenting with different approaches
+        let dir: Vec2 = self.get_target_position() + prediction_time * self.get_target_velocity() - position();
+        dir.y.atan2(dir.x)
+    }
+
     fn standard_radar_sweep(&mut self) {
         // if we've been looking for a while, look harder
         if self.radar.ticks_since_contact > 30 {
@@ -289,7 +301,10 @@ impl FigherGeometry for Ship {
     }
 
     fn turn_to_lead_target(&self, lead: Vec2) {
-        let current_diff = angle_diff(heading(), lead.angle());
+        // debug!("lead.angle {}", lead.angle());
+        // debug!("self.angle {}", self.get_angle_to_target());
+        let current_diff = angle_diff(heading(), self.get_angle_to_target());
+        // let current_diff = angle_diff(heading(), lead.angle());
         let distance = self.get_target_distance();
         // if closer turn differently
         // if further, turn differentlyer
@@ -351,21 +366,34 @@ impl FigherGeometry for Ship {
 
         debug!("closing speed: {}", closing_speed);
 
-        // check if ship is moving faster than target
-        if velocity().x.abs() > contact_velocity.x.abs() {
-            // amount of x to reduce by
-            new_velocity.x = velocity().x.abs() - contact_velocity.x.abs();
+        let time_to_stop: f64 = velocity().length() / max_forward_acceleration();
+        debug!("time to stop: {}", time_to_stop);
+
+        if time_to_stop < tti {
+            // time to stop less than time to intercept, keep going!
+            // handle fighter moves based on distance to target
+            // current best ranges seem to be [0, 500], [500, 1000], [1000, +]
+            if contact_distance < 500.0 {
+                // close to target, just float, probably needs to be smarter here
+                if target_distance_increasing {
+                    accelerate(10.0 * normal_vec);
+                } else {
+                    accelerate(-10.0 * normal_vec);
+                }
+            } else if contact_distance > 500.0 && contact_distance < 1000.0 {
+                // attempts to match contact motion for combat engagement
+                accelerate(10.0 * (contact_velocity));
+            } else if contact_distance > 1000.0 {
+                // refactored math from target_position - position to pre-calc'd variable of the same
+                // need to change to a unit vector in the direction of the target to accelerate
+                // back into optimal combat range
+                accelerate(100.0 * normal_vec);
+            }
         } else {
-            // amount of x to increase by
-            new_velocity.x = contact_velocity.x.abs() - velocity().x.abs();
+            // need to figure out how to slow down here
+            accelerate(-velocity());
         }
-        if velocity().y.abs() > contact_velocity.y.abs() {
-            // amount of y to reduce by
-            new_velocity.y = velocity().y.abs() - contact_velocity.y.abs();
-        } else {
-            // amount of y to increase by
-            new_velocity.y = contact_velocity.y.abs() - velocity().y.abs();
-        }
+
         // TODO: might be useful for quadrant specific logic?
         // match self.get_target_position().get_relative_quadrant(position()) {
         //     Quadrant::One => {
@@ -386,24 +414,6 @@ impl FigherGeometry for Ship {
         //     },
         // }
 
-        // handle fighter moves based on distance to target
-        // current best ranges seem to be [0, 500], [500, 1000], [1000, +]
-        if contact_distance < 500.0 {
-            // close to target, just float, probably needs to be smarter here
-            if target_distance_increasing {
-                accelerate(10.0 * normal_vec);
-            } else {
-                accelerate(-10.0 * normal_vec);
-            }
-        } else if contact_distance > 500.0 && contact_distance < 1000.0 {
-            // attempts to match contact motion for combat engagement
-            accelerate(10.0 * (contact_velocity));
-        } else if contact_distance > 1000.0 {
-            // refactored math from target_position - position to pre-calc'd variable of the same
-            // need to change to a unit vector in the direction of the target to accelerate
-            // back into optimal combat range
-            accelerate(100.0 * normal_vec);
-        }
     }
 }
 
@@ -547,25 +557,6 @@ fn quadratic_lead(target_position: Vec2, target_velocity: Vec2) -> Vec2 {
         return position();
     }
     return target_position + t * target_velocity;
-}
-fn old_get_target_lead(target: Vec2, target_velocity: Vec2, debug: bool) -> Vec2 {
-    let target_vector = target - position();
-    let target_distance = target_vector.length();
-    let time_to_target = target_distance / BULLET_SPEED;
-    let lead = quadratic_lead(target, target_velocity);
-    draw_line(position(), lead, 0xff0000);
-
-    if debug {
-        debug!("distance to target: {}", target_vector.length());
-        debug!("target vector: {}", target_vector);
-        debug!("time to target: {}", time_to_target);
-        debug!("target: {}", target);
-        debug!("target_velocity: {}", target_velocity);
-        debug!("lead: {}", lead);
-        debug!("my heading: {}", heading());
-        debug!("angular velocity: {}", angular_velocity());
-    }
-    lead
 }
 
 fn calculate_angular_velocity(tune_factor: f64, angle_to_mark: f64) -> f64 {
