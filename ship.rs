@@ -107,7 +107,11 @@ trait RadarControl {
     // returns x,y values as distance representation to target
     fn get_target_direction(&self) -> Vec2;
 
+    // returns closing speed to target in scalar m/s
     fn get_closing_speed_to_target(&self) -> f64;
+
+    // returns predicted Vec2 of target lead
+    fn get_target_lead(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2;
 
     // scan contact handler
     fn radar_scan(&mut self);
@@ -176,6 +180,12 @@ impl RadarControl for Ship {
         -((self.get_target_velocity() - velocity()).dot(self.get_target_direction()) / self.get_target_distance())
     }
 
+    fn get_target_lead(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2 {
+        let delta_position = target_position - position();
+        let delta_velocity = target_velocity - velocity();
+        let prediction = delta_position + delta_velocity * delta_position.length() / BULLET_SPEED;
+        prediction
+    }
     fn standard_radar_sweep(&mut self) {
         // if we've been looking for a while, look harder
         if self.radar.ticks_since_contact > 30 {
@@ -215,15 +225,6 @@ impl RadarControl for Ship {
 }
 
 trait FigherGeometry {
-    // returns angle off target's 6'o-clock position
-    fn angle_off_tail(&self) -> f64;
-
-    // returns the closing speed
-    fn rate_of_closure(&self) -> f64;
-
-    // gets nose heading of mark
-    fn bandit_heading(&self) -> f64;
-
     // act upon target with deadly force
     fn engage_target(&self);
 
@@ -253,21 +254,6 @@ enum PursuitGeometry {
 }
 
 impl FigherGeometry for Ship {
-    // TODO: implement
-    fn angle_off_tail(&self) -> f64 {
-        -1.0
-    }
-
-    // TODO: implement
-    fn rate_of_closure(&self) -> f64 {
-        -1.0
-    }
-
-    // TODO: implement
-    fn bandit_heading(&self) -> f64 {
-        -1.0
-    }
-
     fn time_to_intercept(&self) -> f64 {
         let delta_position = position() - self.target.as_ref().unwrap().position;
         let delta_velocity = velocity() - self.target.as_ref().unwrap().velocity;
@@ -292,20 +278,13 @@ impl FigherGeometry for Ship {
     // engage fighter geometry with target
     fn engage_target(&self) {
         if !self.target.is_none() {
-            // let lead = get_target_lead(self.target.clone().unwrap().position, self.target.clone().unwrap().velocity, true);
-            // let lead = self.lead(self.target.clone().unwrap().position, self.target.clone().unwrap().velocity);
-            let lead_point = lead(self.target.as_ref().unwrap().position,self.target.as_ref().unwrap().velocity);
+            let lead_point = self.get_target_lead(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity);
+
+            // draws line from target point to their velocity
             draw_line(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity, 0xffff00);
-            // let mut lead_point: Vec2 = quadratic_lead(self.target.clone().unwrap().position, self.target.clone().unwrap().velocity);
-            // if lead_point == position() {
-            //     lead_point = lead(self.target.clone().unwrap().position, self.target.clone().unwrap().velocity);
-            // }
-            // if engage {
-            draw_line(position(), lead_point, 0xff0000);
+            debug!("lead_point: {}", lead_point);
+            draw_line(position(), lead_point, 0xff00f0);
             self.turn_to_lead_target(lead_point);
-            // } else {
-            // draw_line(position(), lead_point, 0x0000ff);
-            // }
         }
     }
 
@@ -519,7 +498,7 @@ impl Ship {
 // better but still sucks
 fn iterative_approximation(target_position: Vec2, target_velocity: Vec2) -> Vec2 {
     let mut t: f64 = 0.0;
-    let mut iterations = 100;
+    let mut iterations = 10;
     while iterations > 0 {
         let old_t: f64 = t;
         t = ((target_position - position()) + (t * target_velocity)).length() / BULLET_SPEED;
@@ -569,7 +548,7 @@ fn quadratic_lead(target_position: Vec2, target_velocity: Vec2) -> Vec2 {
     }
     return target_position + t * target_velocity;
 }
-fn get_target_lead(target: Vec2, target_velocity: Vec2, debug: bool) -> Vec2 {
+fn old_get_target_lead(target: Vec2, target_velocity: Vec2, debug: bool) -> Vec2 {
     let target_vector = target - position();
     let target_distance = target_vector.length();
     let time_to_target = target_distance / BULLET_SPEED;
@@ -592,32 +571,4 @@ fn get_target_lead(target: Vec2, target_velocity: Vec2, debug: bool) -> Vec2 {
 fn calculate_angular_velocity(tune_factor: f64, angle_to_mark: f64) -> f64 {
     let c1: f64 = 2.0 * tune_factor.sqrt();
     tune_factor * angle_to_mark - c1 * angular_velocity()
-}
-
-fn turn_to_lead_target_delta_position(lead: Vec2) {
-    let current_diff = angle_diff(heading(), (lead - position()).angle());
-    // if closer turn differently
-    // if further, turn differentlyer
-    if current_diff.abs() > 0.1 {
-        torque(calculate_angular_velocity(40.0, current_diff));
-    } else {
-        turn(calculate_angular_velocity(10_000.0, current_diff));
-    }
-}
-fn turn_to_lead_target_from_angle(lead: f64) {
-    let current_diff = angle_diff(heading(), lead);
-    // if closer turn differently
-    // if further, turn differentlyer
-    if current_diff.abs() > 0.1 {
-        torque(calculate_angular_velocity(420.0, current_diff));
-    } else {
-        turn(calculate_angular_velocity(10_000.0, current_diff));
-    }
-}
-
-fn lead(target_position: Vec2, target_velocity: Vec2) -> Vec2 {
-    let delta_position = target_position - position();
-    let delta_velocity = target_velocity - velocity();
-    let prediction = delta_position + delta_velocity * delta_position.length() / BULLET_SPEED;
-    prediction
 }
