@@ -113,6 +113,8 @@ trait RadarControl {
     // returns predicted Vec2 of target lead
     fn get_target_lead(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2;
 
+    fn get_target_lead_in_ticks(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2;
+
     fn get_angle_to_target(&self) -> f64;
 
     // scan contact handler
@@ -187,6 +189,12 @@ impl RadarControl for Ship {
         let delta_velocity = target_velocity - velocity();
         let prediction = delta_position + delta_velocity * delta_position.length() / BULLET_SPEED;
         prediction
+    }
+
+    fn get_target_lead_in_ticks(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2 {
+        let delta_position = target_position - position();
+        let delta_velocity = ((target_velocity - velocity()) / 60.0); // divide down to ticks
+        delta_position + delta_velocity * delta_position.length() / (BULLET_SPEED / 60.0).ceil()
     }
 
     // TODO: broken af
@@ -290,7 +298,8 @@ impl FigherGeometry for Ship {
     // engage fighter geometry with target
     fn engage_target(&self) {
         if !self.target.is_none() {
-            let lead_point = self.get_target_lead(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity);
+            // let lead_point = self.get_target_lead(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity);
+            let lead_point = self.get_target_lead_in_ticks(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity);
 
             // draws line from target point to their velocity
             draw_line(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity, 0xffff00);
@@ -303,8 +312,8 @@ impl FigherGeometry for Ship {
     fn turn_to_lead_target(&self, lead: Vec2) {
         // debug!("lead.angle {}", lead.angle());
         // debug!("self.angle {}", self.get_angle_to_target());
-        let current_diff = angle_diff(heading(), self.get_angle_to_target());
-        // let current_diff = angle_diff(heading(), lead.angle());
+        // let current_diff = angle_diff(heading(), self.get_angle_to_target());
+        let current_diff = angle_diff(heading(), lead.angle());
         let distance = self.get_target_distance();
         // if closer turn differently
         // if further, turn differentlyer
@@ -368,6 +377,7 @@ impl FigherGeometry for Ship {
 
         let time_to_stop: f64 = velocity().length() / max_forward_acceleration();
         debug!("time to stop: {}", time_to_stop);
+        debug!("time to stop in ticks: {}", (time_to_stop * 60.0).ceil());
 
         if time_to_stop < tti {
             // time to stop less than time to intercept, keep going!
