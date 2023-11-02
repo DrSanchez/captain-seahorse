@@ -249,53 +249,33 @@ trait FigherGeometry {
     fn engage_target(&self);
 
     // time for ship to intercept target
-    fn time_to_intercept(&self) -> f64;
+    fn seconds_to_intercept(&self) -> f64;
 
-    fn fly_to_mark(&self, mark: Vec2, pursuit_type: PursuitGeometry);
+    fn ticks_to_intercept(&self) -> f64;
 
     // TODO: improve the next two methods
     // turns ship to focus on target lead coordinates
     fn turn_to_lead_target(&self, lead: Vec2);
+    
+    fn heading_to_target(&self, target: Vec2);
 
     fn basic_maneuver_to_target(&self);
 }
 
-enum PursuitGeometry {
-    // lag pursuit is primarily used on approach
-    // if in lag, you cant shoot the target
-    Lag,
-    // primarily used during missile engagements
-    // flying a pure pursuit course all the way into target will overshoot
-    // should only hold pure pursuit when ready to shoot
-    Pure,
-    // primarily used to close in on bandit and for gun shots
-    // a lead course will also be used during intercept runs
-    Lead,
-}
-
 impl FigherGeometry for Ship {
-    fn time_to_intercept(&self) -> f64 {
+    fn seconds_to_intercept(&self) -> f64 {
         let delta_position = position() - self.target.as_ref().unwrap().position;
         let delta_velocity = velocity() - self.target.as_ref().unwrap().velocity;
         // TODO: divide by delta velocity length or just my velocity?
         delta_position.length() / velocity().length()
     }
 
-    fn fly_to_mark(&self, mark: Vec2, pursuit_type: PursuitGeometry) {
-        match pursuit_type {
-            PursuitGeometry::Lag => {
-                debug!("fly slightly behind mark");
-            },
-            PursuitGeometry::Pure => {
-                debug!("fly directly to mark");
-            },
-            PursuitGeometry::Lead => {
-                debug!("fly slightly ahead of mark");
-            },
-        }
+    fn ticks_to_intercept(&self) -> f64 {
+        (position() - self.target.as_ref().unwrap().position).length() / ((velocity() / 60.0) - (self.target.as_ref().unwrap().velocity / 60.0)).length()
     }
 
     // engage fighter geometry with target
+    // TODO: this maybe should be changed to setup an attack orbit
     fn engage_target(&self) {
         if !self.target.is_none() {
             // let lead_point = self.get_target_lead(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity);
@@ -321,7 +301,7 @@ impl FigherGeometry for Ship {
             if current_diff.abs() > 0.01 {
                 torque(calculate_angular_velocity(69.0, current_diff));
             } else {
-                turn(calculate_angular_velocity(10_000.0, current_diff));
+                turn(calculate_angular_velocity(50_000.0, current_diff));
                 fire(0);
             }
         } else {
@@ -336,6 +316,15 @@ impl FigherGeometry for Ship {
         }
     }
 
+    fn heading_to_target(&self, target: Vec2) {
+        // let current_diff = angle_diff(heading(), self.get_angle_to_target());
+        let current_diff = angle_diff(heading(), target.angle());
+        if current_diff.abs() > 0.01 {
+            torque(calculate_angular_velocity(69.0, current_diff));
+        } else {
+            turn(calculate_angular_velocity(50_000.0, current_diff));
+        }
+    }
     fn basic_maneuver_to_target(&self) {
         if self.target.is_none() {
             return;
@@ -348,7 +337,7 @@ impl FigherGeometry for Ship {
         let contact_future_distance = (position() - contact_future).length();
         let mut target_distance_increasing = false;
 
-        let tti = self.time_to_intercept();
+        let tti = self.seconds_to_intercept();
         debug!("time to intercept: {}", tti);
 
         draw_line(position(), contact_future, 0xff0000);
@@ -369,7 +358,6 @@ impl FigherGeometry for Ship {
         debug!("contact future distance: {}", contact_future_distance);
         debug!("contact normal_vec: {}", normal_vec);
 
-        let mut new_velocity: Vec2 = Vec2::new(0.0, 0.0);
         let relative_quadrant = self.get_target_position().get_relative_quadrant(position());
         debug!("target in relative quadrant {:?}!", relative_quadrant);
 
@@ -405,27 +393,6 @@ impl FigherGeometry for Ship {
             // need to figure out how to slow down here
             accelerate(-velocity());
         }
-
-        // TODO: might be useful for quadrant specific logic?
-        // match self.get_target_position().get_relative_quadrant(position()) {
-        //     Quadrant::One => {
-        //         // x positive, y positive
-        //         debug!("target in relative quadrant 1!");
-        //     },
-        //     Quadrant::Two => {
-        //         // x negative, y positive
-        //         debug!("target in relative quadrant 2!");
-        //     },
-        //     Quadrant::Three => {
-        //         // x negative, y negative
-        //         debug!("target in relative quadrant 3!");
-        //     },
-        //     Quadrant::Four => {
-        //         // x positive, y negative
-        //         debug!("target in relative quadrant 4!");
-        //     },
-        // }
-
     }
 }
 
@@ -471,9 +438,53 @@ impl Ship {
 
     pub fn engaging_target(&mut self) {
         debug!("engaging target");
-
-        self.engage_target();
+        // TODO: comment/uncomment to make ship actually work again
         self.basic_maneuver_to_target();
+        self.engage_target();
+
+        // TODO: broken stuff below
+        // if self.get_target_distance() > 1000.0 {
+        //     debug!("maximum course to target");
+        //     // target is pretty far, fly course to target at max thrust
+        //     let ticks_to_intercept = self.ticks_to_intercept();
+        //     debug!("ticks to intercept: {}", ticks_to_intercept);
+        //     let velocity_in_ticks = velocity() / 60.0;
+        //     debug!("velocity in ticks: {}", velocity_in_ticks);
+
+        //     // gets stopping ticks assuming main thrusters are used to slow down
+        //     let minimum_stopping_time = velocity_in_ticks.length() / (max_forward_acceleration() / 60.0);
+
+        //     // gets stopping ticks assuming reverse thrusters are used to slow down
+        //     let maximum_stopping_time = velocity_in_ticks.length() / (max_backward_acceleration() / 60.0);
+        //     debug!("minimum stopping time: {}", minimum_stopping_time);
+        //     if minimum_stopping_time <= ticks_to_intercept && minimum_stopping_time != 0.0 {
+        //         debug!("BRAKING!");
+        //         // hit earliest time to brake
+
+        //         // flip 180*
+        //         turn(-heading());
+
+        //         // get inverse velocity
+        //         let inverse_velocity = -velocity();
+        //         // scalar inverse_velocity by max forward acceleration
+        //         let max_deceleration_velocity = inverse_velocity * max_forward_acceleration();
+
+        //         // maximum thrusters in opposite direction
+        //         accelerate(max_deceleration_velocity);
+        //     } else {
+        //         debug!("heading to target");
+        //         let lead = self.get_target_lead_in_ticks(self.get_target_position(), self.get_target_velocity());
+        //         self.heading_to_target(lead);
+        //         accelerate(self.get_target_direction() * max_forward_acceleration());
+        //     }
+        // } else if self.get_target_distance() > 500.0 {
+        //     // target in firing range, but still pretty far
+        // } else {
+        //     // close quarters combat
+        //     // TODO: orbit calculations, maintain distance, get normal vector of target position
+        //     self.basic_maneuver_to_target();
+        //     self.engage_target();
+        // }
     }
 
     pub fn out_of_range_target(&mut self) {
@@ -486,11 +497,6 @@ impl Ship {
         debug!("extending radar to maximum distance!");
 
         // fly ship somewhere
-    }
-
-    pub fn heading_to_target(&self, target: Vec2) {
-        // turns to target, will be behind a moving target
-        turn(angle_diff(heading(), (target - position()).angle()));
     }
 
     pub fn ship_control(&mut self) {
