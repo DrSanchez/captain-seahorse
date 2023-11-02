@@ -317,21 +317,23 @@ impl FigherGeometry for Ship {
         let distance = self.get_target_distance();
         // if closer turn differently
         // if further, turn differentlyer
-        // if distance > 1_500.0 {
-        //     if current_diff.abs() > 0.01 {
-        //         torque(calculate_angular_velocity(69.0, current_diff));
-        //     } else {
-        //         turn(calculate_angular_velocity(10_000.0, current_diff));
-        //         fire(0);
-        //     }
-        // } else {
-        if current_diff.abs() > 0.1 {
-            torque(calculate_angular_velocity(69.0, current_diff));
+        if distance > 500.0 {
+            if current_diff.abs() > 0.01 {
+                torque(calculate_angular_velocity(69.0, current_diff));
+            } else {
+                turn(calculate_angular_velocity(10_000.0, current_diff));
+                fire(0);
+            }
         } else {
-            torque(calculate_angular_velocity(20_000.0, current_diff));
-            fire(0);
+            if current_diff.abs() > 0.3 {
+                torque(calculate_angular_velocity(50.0, current_diff));
+            } else if current_diff.abs() > 0.1 {
+                torque(calculate_angular_velocity(1.0, current_diff));
+            } else {
+                torque(calculate_angular_velocity(5_000.0, current_diff));
+                fire(0);
+            }
         }
-        // }
     }
 
     fn basic_maneuver_to_target(&self) {
