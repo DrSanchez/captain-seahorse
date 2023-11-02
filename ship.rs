@@ -1,3 +1,7 @@
+// Tutorial: Radio
+// Destroy the enemy ship. Your radar is broken, but a radio signal on channel
+// 2 will give you its position and velocity.
+
 use oort_api::prelude::*;
 use std::collections::VecDeque;
 
@@ -193,7 +197,7 @@ impl RadarControl for Ship {
 
     fn get_target_lead_in_ticks(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2 {
         let delta_position = target_position - position();
-        let delta_velocity = ((target_velocity - velocity()) / 60.0); // divide down to ticks
+        let delta_velocity = (target_velocity - velocity()) / 60.0; // divide down to ticks
         delta_position + delta_velocity * delta_position.length() / (BULLET_SPEED / 60.0).ceil()
     }
 
@@ -518,7 +522,25 @@ impl Ship {
         // destroy target
         // reset scanner to find next target
         // adjust position to hunting patterns
-        self.radar_control();
+        
+        set_radio_channel(2);
+        if let Some(msg) = receive() {
+            debug!("msg: {msg:?}");
+            let pos = Vec2::new(msg[0], msg[1]);
+            let vel = Vec2::new(msg[2], msg[3]);
+            let target: Option<ScanResult> = Some(ScanResult {
+                position: pos,
+                velocity: vel,
+                class: Class::Unknown,
+                rssi: 42.0,
+                snr: 42.0
+            });
+            self.set_tracking(true, target);
+        } else {
+            debug!("no message received");
+        }
+
+        // self.radar_control();
         self.ship_control();
     }
 }
