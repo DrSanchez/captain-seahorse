@@ -1,9 +1,7 @@
-// Tutorial: Radio
-// Destroy the enemy ship. Your radar is broken, but a radio signal on channel
-// 2 will give you its position and velocity.
-
 use oort_api::prelude::*;
 use std::collections::VecDeque;
+use std::collections::HashMap;
+use uuid::Uuid;
 
 const BULLET_SPEED: f64 = 1000.0; // m/s
 const E: f64 = f64::EPSILON;
@@ -50,6 +48,7 @@ impl UnitCircleQuadrant for Vec2 {
     }
 }
 
+// used to drive general ship behavior
 enum ShipState {
     NoTarget,
     Searching,
@@ -58,12 +57,164 @@ enum ShipState {
     OutOfRadarRange,
 }
 
+// used to drive engaged state behavior
+enum CombatState {
+    Attack,
+    Evade,
+    Flee,
+}
+
+/*******************************
+pseudo scratch redesign area
+
+ship contains:
+ - radar
+ - flight controls
+ - situational awareness
+ - firing controls
+ - radio comms
+
+radar contains:
+ - radar control
+ - radar tracker
+ - collection of tracks
+
+track:
+ - position
+ - velocity
+ - uuid
+ - uncertainty / error information
+
+********************************/
+
+// RadarTrack is a specific item formulated by the radar tracker algorithm
+// it will be used to house revolving data for the object as well as
+// having useful derived data members
+#[derive(Debug)]
+pub struct RadarTrack {
+    // list of scan results tracked for this item
+    // these need to be parsed and filtered
+    scans: VecDeque<ScanResult>,
+
+    // resolved position estimate
+    position: Vec2,
+
+
+    // resolved velocity estimate
+    velocity: Vec2,
+
+    // velocity.y.atan2(velocity.x)
+    heading: f64,
+    
+    // need to create a uuid
+    // let id = Uuid::new_v4();
+    id: String,
+
+    // default will be false, assume all targets are threats unless
+    // we receive explicit radio transmission from friendly, then tag
+    friendly: bool,
+
+    track_gate: RadarTrackGate,
+}
+
+// geometry helpers specific to a single RadarTrack
+trait RadarTrackGeometry {
+    fn heading(&self) -> f64;
+
+
+}
+
+impl RadarTrackGeometry for RadarTrack {
+    fn heading(&self) -> f64 {
+        self.velocity.y.atan2(self.velocity.x)
+    }
+}
+
+// defines a square field for a given radartrack
+pub struct RadarTrackGate {
+    // scalar value (in meters) for how big a window we think the position may be in
+    // determines corners from point
+    error_magnitude: f64,
+
+    center: Vec2,
+
+    // top left gate corner
+    top_left: Vec2,
+
+    // bottom right gate corner
+    bottom_right: Vec2,
+}
+
+impl RadarTrackGate {
+    pub fn new(top_left: Vec2, bottom_right: Vec2) -> RadarTrackGate {
+        RadarTrackGate { top_left,bottom_right }
+    }
+
+    // scales stored gate coords based on new magnitude
+    pub fn scale_gate_around_point(oint: Vec2, gate_magnitude: f64) {
+        self.calculate_top_left(point)
+    }
+
+    pub fn calculate_top_left(point: Vec2) -> Vec2 {
+        let top_left: Vec2 = point.x - (error_magnitude / 2.0);
+        
+    }
+    pub fn calculate_bottom_right(point: Vec2) -> Vec2 {
+
+    }
+}
+
 pub struct Radar {
     // count ticks since contact to switch to extended radar sweep
     ticks_since_contact: u32,
 
     // collect current target positions for time-based calculations
-    target_positions: Option<Vec2>,
+    potential_targets: HashMap<RadarTrack>,
+}
+
+trait RadarTracker {
+    // main loop
+    fn radar_loop(&self);
+    
+    // used to add a new ScanResult plot to the potential_targets data
+    fn add_detection_point(&self, plot: ScanResult);
+}
+
+// impl against Radar struct to remove dependency on Ship
+impl RadarTracker for Radar {
+    fn radar_loop(&self) {
+        
+    }
+
+    fn add_detection_point(&self, plot: ScanResult) {
+        if self.potential_targets.is_empty() {
+            // first result, no values to compare with
+
+            // populate initial RadarTrack with baseline values
+            let track = RadarTrack {
+                scans: VecDeque::new(plot),
+                position: plot.position,
+                position_error_magnitude: 1.0,
+                velocity: plot.velocity,
+                heading: plot.velocity.y.atan2(plot.velocity.x),
+                id: Uuid::new_v4(),
+                friendly: false,
+                track_gate: RadarTrackGate::new(RadarTrackGate::calculate_top_left(plot.position), )
+            }
+            debug!("new RadarTrack: {:?}", track);
+        } else {
+            // check radartracks for potential match
+        }
+    }
+}
+
+
+pub struct Radio {
+    // current radio channel
+    current_channel: u8,
+
+    // queue of messages to process
+    message_queue: VecDeque<String>,
 }
 
 pub struct Ship {
@@ -76,178 +227,11 @@ pub struct Ship {
     // current ship state
     state: ShipState,
 
+    radio: Radio,
+
     // ship radar component
     radar: Radar,
 }
-
-trait RadarControl {
-    // main radar control loop
-    fn radar_control(&mut self);
-
-    // sets tracking parameters for an acquired target
-    fn set_tracking(&mut self, tracking: bool, object: Option<ScanResult>);
-
-    // stop tracking, for any reason
-    fn abort_tracking(&mut self);
-
-    // tracks target currently set to Ship.target
-    fn radar_tracking(&self);
-
-    // performs a standard radar sweep
-    fn standard_radar_sweep(&mut self);
-
-    // performs a long range radar sweep
-    fn long_range_radar_sweep(&mut self);
-
-    // returns current target position
-    fn get_target_position(&self) -> Vec2;
-
-    // returns distance to target
-    fn get_target_distance(&self) -> f64;
-
-    // returns target velocity in x,y
-    fn get_target_velocity(&self) -> Vec2;
-
-    // returns x,y values as distance representation to target
-    fn get_target_direction(&self) -> Vec2;
-
-    // returns closing speed to target in scalar m/s
-    fn get_closing_speed_to_target(&self) -> f64;
-
-    // returns predicted Vec2 of target lead
-    fn get_target_lead(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2;
-
-    fn get_target_lead_in_ticks(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2;
-
-    fn get_angle_to_target(&self) -> f64;
-
-    // scan contact handler
-    fn radar_scan(&mut self);
-}
-
-impl RadarControl for Ship {
-    fn set_tracking(&mut self, tracking: bool, object: Option<ScanResult>) {
-        self.target_lock = tracking;
-
-        if object.is_none() {
-            self.target = None;
-            self.set_state(ShipState::Searching);
-        } else {
-            self.target = Some(ScanResult { ..object.unwrap() });
-            self.set_state(ShipState::Engaged);
-        }
-    }
-
-    fn abort_tracking(&mut self) {
-        self.target_lock = false;
-        self.target = None;
-        self.set_state(ShipState::Searching);
-    }
-
-    fn radar_tracking(&self) {
-        if self.target_lock {
-            let target_distance = self.get_target_distance();
-            let radar_heading = (self.get_target_direction()).angle();
-            set_radar_heading(radar_heading);
-
-            // focus radar on target
-            set_radar_width(PI / target_distance.log(2.0));
-            set_radar_max_distance(target_distance + (target_distance * 0.1));
-            set_radar_min_distance(target_distance - (target_distance * 0.3));
-        }
-    }
-
-    fn radar_control(&mut self) {
-        self.radar_scan();
-        match self.get_state() {
-            ShipState::NoTarget => self.standard_radar_sweep(),
-            ShipState::Searching => self.standard_radar_sweep(),
-            ShipState::Engaged => self.radar_tracking(),
-            ShipState::OutOfTargetRange => self.standard_radar_sweep(),
-            ShipState::OutOfRadarRange => self.long_range_radar_sweep(),
-        }
-    }
-
-    fn get_target_position(&self) -> Vec2 {
-        self.target.as_ref().unwrap().position
-    }
-
-    fn get_target_distance(&self) -> f64 {
-        self.get_target_direction().length()
-    }
-
-    fn get_target_direction(&self) -> Vec2 {
-        self.target.as_ref().unwrap().position - position()
-    }
-
-    fn get_target_velocity(&self) -> Vec2 {
-        self.target.as_ref().unwrap().velocity
-    }
-
-    fn get_closing_speed_to_target(&self) -> f64 {
-        -((self.get_target_velocity() - velocity()).dot(self.get_target_direction()) / self.get_target_distance())
-    }
-
-    fn get_target_lead(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2 {
-        let delta_position = target_position - position();
-        let delta_velocity = target_velocity - velocity();
-        let prediction = delta_position + delta_velocity * delta_position.length() / BULLET_SPEED;
-        prediction
-    }
-
-    fn get_target_lead_in_ticks(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2 {
-        let delta_position = target_position - position();
-        let delta_velocity = (target_velocity - velocity()) / 60.0; // divide down to ticks
-        delta_position + delta_velocity * delta_position.length() / (BULLET_SPEED / 60.0).ceil()
-    }
-
-    // TODO: broken af
-    fn get_angle_to_target(&self) -> f64 {
-        // let dir = self.get_target_lead(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity) - position();
-        let prediction_time: f64 = 1.0;
-        // experimenting with different approaches
-        let dir: Vec2 = self.get_target_position() + prediction_time * self.get_target_velocity() - position();
-        dir.y.atan2(dir.x)
-    }
-
-    fn standard_radar_sweep(&mut self) {
-        // if we've been looking for a while, look harder
-        if self.radar.ticks_since_contact > 30 {
-            self.set_state(ShipState::OutOfRadarRange);
-        }
-
-        set_radar_heading(radar_heading() + radar_width());
-        set_radar_width(PI / 2.0);
-        set_radar_max_distance(10_000.0);
-        set_radar_min_distance(25.0);
-    }
-
-    fn long_range_radar_sweep(&mut self) {
-        debug!("long range radar sweep");
-        set_radar_heading(radar_heading() + radar_width());
-        set_radar_width(PI / 8.0);
-        set_radar_max_distance(1_000_000.0);
-        set_radar_min_distance(25.0);
-    }
-
-    fn radar_scan(&mut self) {
-        // do scanning, found a contact if we enter block
-        if let Some(contact) = scan() {
-            // reset contact counter
-            self.radar.ticks_since_contact = 0;
-
-            // set tracking object
-            self.set_tracking(true, Some(contact.clone()));
-        } else {
-            debug!("no target, incrementing radar ticks: {}", self.radar.ticks_since_contact);
-            // no target this scan, increment ticks
-            self.radar.ticks_since_contact += 1;
-            self.set_state(ShipState::Searching);
-        }
-
-    }
-}
-
 trait FigherGeometry {
     // act upon target with deadly force
     fn engage_target(&self);
@@ -406,10 +390,14 @@ impl Ship {
             target_lock: false,
             target: None,
             state: ShipState::NoTarget,
+            radio: Radio {
+                current_channel: 0,
+                message_queue: VecDeque::new(),
+            },
             radar: Radar {
                 ticks_since_contact: 0,
-                target_positions: None,
-            },
+                potential_targets: HashMap::new(),
+            }
         }
     }
 
@@ -522,25 +510,7 @@ impl Ship {
         // destroy target
         // reset scanner to find next target
         // adjust position to hunting patterns
-        
-        set_radio_channel(2);
-        if let Some(msg) = receive() {
-            debug!("msg: {msg:?}");
-            let pos = Vec2::new(msg[0], msg[1]);
-            let vel = Vec2::new(msg[2], msg[3]);
-            let target: Option<ScanResult> = Some(ScanResult {
-                position: pos,
-                velocity: vel,
-                class: Class::Unknown,
-                rssi: 42.0,
-                snr: 42.0
-            });
-            self.set_tracking(true, target);
-        } else {
-            debug!("no message received");
-        }
-
-        // self.radar_control();
+        self.radar_control();
         self.ship_control();
     }
 }
@@ -602,4 +572,159 @@ fn quadratic_lead(target_position: Vec2, target_velocity: Vec2) -> Vec2 {
 fn calculate_angular_velocity(tune_factor: f64, angle_to_mark: f64) -> f64 {
     let c1: f64 = 2.0 * tune_factor.sqrt();
     tune_factor * angle_to_mark - c1 * angular_velocity()
+}
+trait RadarControl {
+    // main radar control loop
+    fn radar_control(&mut self);
+    // sets tracking parameters for an acquired target
+    fn set_tracking(&mut self, tracking: bool, object: Option<ScanResult>);
+    // stop tracking, for any reason
+    fn abort_tracking(&mut self);
+    // tracks target currently set to Ship.target
+    fn radar_tracking(&self);
+    // performs a standard radar sweep
+    fn standard_radar_sweep(&mut self);
+    // performs a long range radar sweep
+    fn long_range_radar_sweep(&mut self);
+    // returns current target position
+    fn get_target_position(&self) -> Vec2;
+    // returns distance to target
+    fn get_target_distance(&self) -> f64;
+    // returns target velocity in x,y
+    fn get_target_velocity(&self) -> Vec2;
+    // returns x,y values as distance representation to target
+    fn get_target_direction(&self) -> Vec2;
+    // returns closing speed to target in scalar m/s
+    fn get_closing_speed_to_target(&self) -> f64;
+    // returns predicted Vec2 of target lead in seconds
+    fn get_target_lead(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2;
+    // returns predicted Vec2 of target lead in ticks
+    fn get_target_lead_in_ticks(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2;
+    // basic angle to target
+    fn get_angle_to_target(&self) -> f64;
+    // basic, initial scan contact handler
+    fn radar_scan(&mut self);
+}
+
+impl RadarControl for Ship {
+    fn set_tracking(&mut self, tracking: bool, object: Option<ScanResult>) {
+        self.target_lock = tracking;
+
+        if object.is_none() {
+            self.target = None;
+            self.set_state(ShipState::Searching);
+        } else {
+            self.target = Some(ScanResult { ..object.unwrap() });
+            self.set_state(ShipState::Engaged);
+        }
+    }
+
+    fn abort_tracking(&mut self) {
+        self.target_lock = false;
+        self.target = None;
+        self.set_state(ShipState::Searching);
+    }
+
+    fn radar_tracking(&self) {
+        if self.target_lock {
+            let target_distance = self.get_target_distance();
+            let radar_heading = (self.get_target_direction()).angle();
+            set_radar_heading(radar_heading);
+
+            // focus radar on target
+            set_radar_width(PI / target_distance.log(2.0));
+            set_radar_max_distance(target_distance + (target_distance * 0.1));
+            set_radar_min_distance(target_distance - (target_distance * 0.3));
+        }
+    }
+
+    fn radar_control(&mut self) {
+        self.radar_scan();
+        match self.get_state() {
+            ShipState::NoTarget => self.standard_radar_sweep(),
+            ShipState::Searching => self.standard_radar_sweep(),
+            ShipState::Engaged => self.radar_tracking(),
+            ShipState::OutOfTargetRange => self.standard_radar_sweep(),
+            ShipState::OutOfRadarRange => self.long_range_radar_sweep(),
+        }
+    }
+
+    fn get_target_position(&self) -> Vec2 {
+        self.target.as_ref().unwrap().position
+    }
+
+    fn get_target_distance(&self) -> f64 {
+        self.get_target_direction().length()
+    }
+
+    fn get_target_direction(&self) -> Vec2 {
+        self.target.as_ref().unwrap().position - position()
+    }
+
+    fn get_target_velocity(&self) -> Vec2 {
+        self.target.as_ref().unwrap().velocity
+    }
+
+    fn get_closing_speed_to_target(&self) -> f64 {
+        -((self.get_target_velocity() - velocity()).dot(self.get_target_direction()) / self.get_target_distance())
+    }
+
+    fn get_target_lead(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2 {
+        let delta_position = target_position - position();
+        let delta_velocity = target_velocity - velocity();
+        let prediction = delta_position + delta_velocity * delta_position.length() / BULLET_SPEED;
+        prediction
+    }
+
+    fn get_target_lead_in_ticks(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2 {
+        let delta_position = target_position - position();
+        let delta_velocity = ((target_velocity - velocity()) / 60.0); // divide down to ticks
+        delta_position + delta_velocity * delta_position.length() / (BULLET_SPEED / 60.0).ceil()
+    }
+
+    // TODO: broken af
+    fn get_angle_to_target(&self) -> f64 {
+        // let dir = self.get_target_lead(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity) - position();
+        let prediction_time: f64 = 1.0;
+        // experimenting with different approaches
+        let dir: Vec2 = self.get_target_position() + prediction_time * self.get_target_velocity() - position();
+        dir.y.atan2(dir.x)
+    }
+
+    fn standard_radar_sweep(&mut self) {
+        // if we've been looking for a while, look harder
+        if self.radar.ticks_since_contact > 30 {
+            self.set_state(ShipState::OutOfRadarRange);
+        }
+
+        set_radar_heading(radar_heading() + radar_width());
+        set_radar_width(PI / 2.0);
+        set_radar_max_distance(10_000.0);
+        set_radar_min_distance(25.0);
+    }
+
+    fn long_range_radar_sweep(&mut self) {
+        debug!("long range radar sweep");
+        set_radar_heading(radar_heading() + radar_width());
+        set_radar_width(PI / 8.0);
+        set_radar_max_distance(1_000_000.0);
+        set_radar_min_distance(25.0);
+    }
+
+    fn radar_scan(&mut self) {
+        // do scanning, found a contact if we enter block
+        if let Some(contact) = scan() {
+            // reset contact counter
+            self.radar.ticks_since_contact = 0;
+
+            // set tracking object
+            self.set_tracking(true, Some(contact.clone()));
+        } else {
+            debug!("no target, incrementing radar ticks: {}", self.radar.ticks_since_contact);
+            // no target this scan, increment ticks
+            self.radar.ticks_since_contact += 1;
+            self.set_state(ShipState::Searching);
+        }
+
+    }
 }
