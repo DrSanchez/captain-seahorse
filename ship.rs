@@ -1,7 +1,6 @@
 use oort_api::prelude::*;
 use std::collections::VecDeque;
 use std::collections::HashMap;
-use uuid::Uuid;
 
 const BULLET_SPEED: f64 = 1000.0; // m/s
 const E: f64 = f64::EPSILON;
@@ -99,7 +98,6 @@ pub struct RadarTrack {
     // resolved position estimate
     position: Vec2,
 
-
     // resolved velocity estimate
     velocity: Vec2,
 
@@ -107,14 +105,14 @@ pub struct RadarTrack {
     heading: f64,
     
     // need to create a uuid
-    // let id = Uuid::new_v4();
-    id: String,
+    id: u128,
 
     // default will be false, assume all targets are threats unless
     // we receive explicit radio transmission from friendly, then tag
     friendly: bool,
 
-    track_gate: RadarTrackGate,
+    // gate is the predicted target fence for position estimates
+    gate: RadarTrackGate,
 }
 
 // geometry helpers specific to a single RadarTrack
@@ -131,6 +129,7 @@ impl RadarTrackGeometry for RadarTrack {
 }
 
 // defines a square field for a given radartrack
+#[derive(Debug)]
 pub struct RadarTrackGate {
     // scalar value (in meters) for how big a window we think the position may be in
     // determines corners from point
@@ -138,29 +137,42 @@ pub struct RadarTrackGate {
 
     center: Vec2,
 
-    // top left gate corner
-    top_left: Vec2,
-
-    // bottom right gate corner
-    bottom_right: Vec2,
+    radius: f64,
 }
 
 impl RadarTrackGate {
-    pub fn new(top_left: Vec2, bottom_right: Vec2) -> RadarTrackGate {
-        RadarTrackGate { top_left,bottom_right }
+    pub fn new(point: Vec2, radius: f64) -> RadarTrackGate {
+        RadarTrackGate {
+            error_magnitude: 10.0,
+            center: point,
+            // TODO: what init should these have?
+            radius,
+        }
+    }
+    pub fn draw_gate(&self) {
+        draw_square(self.center, self.radius, 0xff0000);
     }
 
-    // scales stored gate coords based on new magnitude
-    pub fn scale_gate_around_point(oint: Vec2, gate_magnitude: f64) {
-        self.calculate_top_left(point)
-    }
+    // find current points of square based on radius or error magnitude
+    pub fn point_in_gate(&self, point: Vec2) -> bool {
+        let p1: Vec2 = Vec2::new(point.x + self.radius / 2.0, point.y + self.radius / 2.0);
+        let p2: Vec2 = Vec2::new(point.x - self.radius / 2.0, point.y + self.radius / 2.0);
+        let p3: Vec2 = Vec2::new(point.x - self.radius / 2.0, point.y - self.radius / 2.0);
+        let p4: Vec2 = Vec2::new(point.x + self.radius / 2.0, point.y - self.radius / 2.0);
 
-    pub fn calculate_top_left(point: Vec2) -> Vec2 {
-        let top_left: Vec2 = point.x - (error_magnitude / 2.0);
-        
-    }
-    pub fn calculate_bottom_right(point: Vec2) -> Vec2 {
-
+        if point.x > p1.x || point.y > p1.y {
+            return false;
+        }
+        if point.x < p2.x || point.y > p2.y {
+            return false;
+        }
+        if point.x < p3.x || point.y < p3.y {
+            return false;
+        }
+        if point.x > p4.x || point.y < p4.y {
+            return false;
+        }
+        true
     }
 }
 
@@ -169,41 +181,73 @@ pub struct Radar {
     ticks_since_contact: u32,
 
     // collect current target positions for time-based calculations
-    potential_targets: HashMap<RadarTrack>,
+    potential_targets: HashMap<u128, RadarTrack>,
+
+    // simple unsigned integer id to use for uuids
+    id_gen: u128,
 }
 
 trait RadarTracker {
     // main loop
-    fn radar_loop(&self);
+    fn radar_loop(&mut self);
+    
+    // handle unique id creation
+    fn new_id_gen(&mut self) -> u128;
     
     // used to add a new ScanResult plot to the potential_targets data
-    fn add_detection_point(&self, plot: ScanResult);
+    fn add_detection_point(&mut self, plot: Option<ScanResult>);
 }
 
 // impl against Radar struct to remove dependency on Ship
 impl RadarTracker for Radar {
-    fn radar_loop(&self) {
-        
+    fn radar_loop(&mut self) {
+        if let Some(plot) = scan() {
+            self.add_detection_point(Some(plot));
+        }
     }
 
-    fn add_detection_point(&self, plot: ScanResult) {
+    // use current value as next, then increment id counter
+    fn new_id_gen(&mut self) -> u128 {
+        let next = self.id_gen;
+        self.id_gen += 1;
+        next
+    }
+
+    fn add_detection_point(&mut self, plot: Option<ScanResult>) {
+        debug!("adding detection point");
         if self.potential_targets.is_empty() {
             // first result, no values to compare with
-
+            let mut scans: VecDeque<ScanResult> = VecDeque::new();
+            scans.push_back(plot.clone().unwrap());
+            // this should only have the one element
+            debug!("scans: {:?}", scans);
             // populate initial RadarTrack with baseline values
             let track = RadarTrack {
-                scans: VecDeque::new(plot),
-                position: plot.position,
-                position_error_magnitude: 1.0,
-                velocity: plot.velocity,
-                heading: plot.velocity.y.atan2(plot.velocity.x),
-                id: Uuid::new_v4(),
+                scans,
+                position: plot.as_ref().unwrap().position,
+                velocity: plot.as_ref().unwrap().velocity,
+                heading: plot.as_ref().unwrap().velocity.y.atan2(plot.as_ref().unwrap().velocity.x),
+                id: self.new_id_gen(),
                 friendly: false,
-                track_gate: RadarTrackGate::new(RadarTrackGate::calculate_top_left(plot.position), )
-            }
+                gate: RadarTrackGate::new(plot.as_ref().unwrap().position, plot.as_ref().unwrap().rssi.abs()),
+            };
             debug!("new RadarTrack: {:?}", track);
+            self.potential_targets.insert(track.id, track);
         } else {
+            let mut found = false;
             // check radartracks for potential match
+            for (id, track) in &self.potential_targets {
+                if found {
+                    break;
+                }
+                debug!("target id: {}", id);
+                debug!("track: {:?}", track);
+                track.gate.draw_gate();
+                if track.gate.point_in_gate(plot.as_ref().unwrap().position) {
+                    debug!("associating new plot with existing target");
+                    found = true;
+                }
+            }
         }
     }
 }
@@ -253,7 +297,7 @@ trait FigherGeometry {
 impl FigherGeometry for Ship {
     fn seconds_to_intercept(&self) -> f64 {
         let delta_position = position() - self.target.as_ref().unwrap().position;
-        let delta_velocity = velocity() - self.target.as_ref().unwrap().velocity;
+        let _delta_velocity = velocity() - self.target.as_ref().unwrap().velocity;
         // TODO: divide by delta velocity length or just my velocity?
         delta_position.length() / velocity().length()
     }
@@ -397,6 +441,7 @@ impl Ship {
             radar: Radar {
                 ticks_since_contact: 0,
                 potential_targets: HashMap::new(),
+                id_gen: 0,
             }
         }
     }
@@ -431,8 +476,8 @@ impl Ship {
     pub fn engaging_target(&mut self) {
         debug!("engaging target");
         // TODO: comment/uncomment to make ship actually work again
-        self.basic_maneuver_to_target();
-        self.engage_target();
+        // self.basic_maneuver_to_target();
+        // self.engage_target();
 
         // TODO: broken stuff below
         // if self.get_target_distance() > 1000.0 {
@@ -510,6 +555,7 @@ impl Ship {
         // destroy target
         // reset scanner to find next target
         // adjust position to hunting patterns
+        self.radar.radar_loop();
         self.radar_control();
         self.ship_control();
     }
@@ -678,7 +724,7 @@ impl RadarControl for Ship {
 
     fn get_target_lead_in_ticks(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2 {
         let delta_position = target_position - position();
-        let delta_velocity = ((target_velocity - velocity()) / 60.0); // divide down to ticks
+        let delta_velocity = (target_velocity - velocity()) / 60.0; // divide down to ticks
         delta_position + delta_velocity * delta_position.length() / (BULLET_SPEED / 60.0).ceil()
     }
 
