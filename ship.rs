@@ -113,18 +113,41 @@ pub struct RadarTrack {
 
     // gate is the predicted target fence for position estimates
     gate: RadarTrackGate,
+
+    // lifetime manager
+    contact_tick: u32,
 }
 
 // geometry helpers specific to a single RadarTrack
 trait RadarTrackGeometry {
     fn heading(&self) -> f64;
 
+    fn push_plot(&mut self, plot: Option<ScanResult>);
 
+    fn check_gate(&mut self, point: Vec2) -> bool;
 }
 
 impl RadarTrackGeometry for RadarTrack {
     fn heading(&self) -> f64 {
         self.velocity.y.atan2(self.velocity.x)
+    }
+
+    fn push_plot(&mut self, plot: Option<ScanResult>) {
+        self.scans.push_back(plot.unwrap());
+
+        // update radartrack logic
+    }
+
+    fn check_gate(&mut self, point: Vec2) -> bool {
+
+            // X m/s / 60 => Y m/t => Y m/t * delta_tick => velocity per tick scaled to number of ticks
+        let delta_tick: f64 = (current_tick() - self.contact_tick) as f64;
+        let track_velocity_in_ticks = self.velocity / 60.0;
+
+        // estimated velocity since last contact
+        let e_v = track_velocity_in_ticks * delta_tick;
+        self.gate.update_center(e_v);
+        self.gate.point_in_gate(point)
     }
 }
 
@@ -145,7 +168,6 @@ impl RadarTrackGate {
         RadarTrackGate {
             error_magnitude: 10.0,
             center: point,
-            // TODO: what init should these have?
             radius,
         }
     }
@@ -153,12 +175,16 @@ impl RadarTrackGate {
         draw_square(self.center, self.radius, 0xff0000);
     }
 
+    pub fn update_center(&mut self, est_velocity: Vec2) {
+        self.center += est_velocity;
+    }
+
     // find current points of square based on radius or error magnitude
     pub fn point_in_gate(&self, point: Vec2) -> bool {
-        let p1: Vec2 = Vec2::new(point.x + self.radius / 2.0, point.y + self.radius / 2.0);
-        let p2: Vec2 = Vec2::new(point.x - self.radius / 2.0, point.y + self.radius / 2.0);
-        let p3: Vec2 = Vec2::new(point.x - self.radius / 2.0, point.y - self.radius / 2.0);
-        let p4: Vec2 = Vec2::new(point.x + self.radius / 2.0, point.y - self.radius / 2.0);
+        let p1: Vec2 = Vec2::new(self.center.x + self.radius / 2.0, self.center.y + self.radius / 2.0);
+        let p2: Vec2 = Vec2::new(self.center.x - self.radius / 2.0, self.center.y + self.radius / 2.0);
+        let p3: Vec2 = Vec2::new(self.center.x - self.radius / 2.0, self.center.y - self.radius / 2.0);
+        let p4: Vec2 = Vec2::new(self.center.x + self.radius / 2.0, self.center.y - self.radius / 2.0);
 
         if point.x > p1.x || point.y > p1.y {
             return false;
@@ -194,6 +220,8 @@ trait RadarTracker {
     // handle unique id creation
     fn new_id_gen(&mut self) -> u128;
     
+    fn insert_new_potential_target(&mut self, plot: Option<ScanResult>);
+
     // used to add a new ScanResult plot to the potential_targets data
     fn add_detection_point(&mut self, plot: Option<ScanResult>);
 }
@@ -210,43 +238,98 @@ impl RadarTracker for Radar {
     fn new_id_gen(&mut self) -> u128 {
         let next = self.id_gen;
         self.id_gen += 1;
+        debug!("new_id_gen: next: {}, incremented: {}", next, self.id_gen);
         next
+    }
+
+    fn insert_new_potential_target(&mut self, plot: Option<ScanResult>) {
+        let mut scans: VecDeque<ScanResult> = VecDeque::new();
+        debug!("insert_new_potential_target: new plot position: {}", plot.as_ref().unwrap().position);
+        scans.push_back(plot.clone().unwrap());
+        // populate initial RadarTrack with baseline values
+        let track = RadarTrack {
+            scans,
+            position: plot.as_ref().unwrap().position,
+            velocity: plot.as_ref().unwrap().velocity,
+            heading: plot.as_ref().unwrap().velocity.y.atan2(plot.as_ref().unwrap().velocity.x),
+            id: self.new_id_gen(),
+            friendly: false,
+            gate: RadarTrackGate::new(plot.as_ref().unwrap().position, plot.as_ref().unwrap().rssi.abs() * 2.0),
+            contact_tick: current_tick(),
+        };
+        self.potential_targets.insert(track.id, track);
     }
 
     fn add_detection_point(&mut self, plot: Option<ScanResult>) {
         debug!("adding detection point");
         if self.potential_targets.is_empty() {
             // first result, no values to compare with
-            let mut scans: VecDeque<ScanResult> = VecDeque::new();
-            scans.push_back(plot.clone().unwrap());
-            // this should only have the one element
-            debug!("scans: {:?}", scans);
-            // populate initial RadarTrack with baseline values
-            let track = RadarTrack {
-                scans,
-                position: plot.as_ref().unwrap().position,
-                velocity: plot.as_ref().unwrap().velocity,
-                heading: plot.as_ref().unwrap().velocity.y.atan2(plot.as_ref().unwrap().velocity.x),
-                id: self.new_id_gen(),
-                friendly: false,
-                gate: RadarTrackGate::new(plot.as_ref().unwrap().position, plot.as_ref().unwrap().rssi.abs()),
-            };
-            debug!("new RadarTrack: {:?}", track);
-            self.potential_targets.insert(track.id, track);
+            self.insert_new_potential_target(plot);
         } else {
             let mut found = false;
+            let mut found_id = 0;
+            let mut old_tracks: Vec<u128> = vec![];
+            // TODO: improve detection point association
             // check radartracks for potential match
-            for (id, track) in &self.potential_targets {
+            for k in self.potential_targets.keys() {
+                self.potential_targets.entry(*k); //.and_modify(|e| {
+                                                    //        found = e.check_gate(plot.as_ref().unwrap().position);
+                                                      //      found_id = e.id;
+                                                        //    });
                 if found {
                     break;
                 }
-                debug!("target id: {}", id);
-                debug!("track: {:?}", track);
-                track.gate.draw_gate();
-                if track.gate.point_in_gate(plot.as_ref().unwrap().position) {
+                // let t = self.potential_targets.get(k).unwrap();
+                // t.gate.draw_gate();
+                if found {
                     debug!("associating new plot with existing target");
-                    found = true;
+                    // found = true;
+                    // update current track with new data
+                } else {
+                    // check current track lifetime
+                    let delta_tick: f64 = (current_tick() - self.potential_targets.get(&found_id).unwrap().contact_tick).into();
+
+                    // check if num ticks hits 3 second window, remove outdated track
+                    if delta_tick / 60.0 >= 3.0 {
+                        debug!("adding old_track id: {}", k);
+                        old_tracks.push(*k);
+                    }
                 }
+            }
+            // for &id in &self.potential_targets {
+            //     match 
+            // }
+
+            // for (id, track) in &self.potential_targets {
+            //     if found {
+            //         break;
+            //     }
+            //     let mut t = RadarTrack { ..track };
+            //     t.gate.draw_gate();
+            //     if t.check_gate(plot.as_ref().unwrap().position) {
+            //         debug!("associating new plot with existing target");
+            //         found = true;
+            //         // update current track with new data
+            //     } else {
+            //         // check current track lifetime
+            //         let delta_tick: f64 = (current_tick() - t.contact_tick).into();
+
+            //         // check if num ticks hits 3 second window, remove outdated track
+            //         if delta_tick / 60.0 >= 3.0 {
+            //             debug!("adding old_track id: {}", id);
+            //             old_tracks.push(*id);
+            //         }
+            //     }
+            // }
+            // clear out of date tracks
+            for i in &old_tracks {
+                self.potential_targets.remove(i);
+            }
+            old_tracks.clear();
+            if !found {
+                // new potential target discovered
+                debug!("new target discovered");
+                self.insert_new_potential_target(plot);
             }
         }
     }
@@ -689,7 +772,7 @@ impl RadarControl for Ship {
         match self.get_state() {
             ShipState::NoTarget => self.standard_radar_sweep(),
             ShipState::Searching => self.standard_radar_sweep(),
-            ShipState::Engaged => self.radar_tracking(),
+            ShipState::Engaged => self.standard_radar_sweep(),
             ShipState::OutOfTargetRange => self.standard_radar_sweep(),
             ShipState::OutOfRadarRange => self.long_range_radar_sweep(),
         }
@@ -744,7 +827,7 @@ impl RadarControl for Ship {
         }
 
         set_radar_heading(radar_heading() + radar_width());
-        set_radar_width(PI / 2.0);
+        set_radar_width(PI / 12.0);
         set_radar_max_distance(10_000.0);
         set_radar_min_distance(25.0);
     }
