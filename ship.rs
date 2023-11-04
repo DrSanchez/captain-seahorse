@@ -1,6 +1,8 @@
 use oort_api::prelude::*;
 use std::collections::VecDeque;
 use std::collections::HashMap;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 const BULLET_SPEED: f64 = 1000.0; // m/s
 const E: f64 = f64::EPSILON;
@@ -171,8 +173,10 @@ impl RadarTrackGate {
             radius,
         }
     }
-    pub fn draw_gate(&self) {
+    pub fn draw_gate(&self, id: u128) {
         draw_square(self.center, self.radius, 0xff0000);
+        let p4: Vec2 = Vec2::new(self.center.x + self.radius / 2.0, self.center.y - self.radius / 2.0);
+        draw_text!(p4, 0xff0000, "id: {}", id);
     }
 
     pub fn update_center(&mut self, est_velocity: Vec2) {
@@ -186,16 +190,16 @@ impl RadarTrackGate {
         let p3: Vec2 = Vec2::new(self.center.x - self.radius / 2.0, self.center.y - self.radius / 2.0);
         let p4: Vec2 = Vec2::new(self.center.x + self.radius / 2.0, self.center.y - self.radius / 2.0);
 
-        if point.x > p1.x || point.y > p1.y {
+        if point.x >= p1.x || point.y >= p1.y {
             return false;
         }
-        if point.x < p2.x || point.y > p2.y {
+        if point.x <= p2.x || point.y >= p2.y {
             return false;
         }
-        if point.x < p3.x || point.y < p3.y {
+        if point.x <= p3.x || point.y <= p3.y {
             return false;
         }
-        if point.x > p4.x || point.y < p4.y {
+        if point.x >= p4.x || point.y <= p4.y {
             return false;
         }
         true
@@ -207,7 +211,7 @@ pub struct Radar {
     ticks_since_contact: u32,
 
     // collect current target positions for time-based calculations
-    potential_targets: HashMap<u128, RadarTrack>,
+    potential_targets: HashMap<u128, Rc<RefCell<RadarTrack>>>,
 
     // simple unsigned integer id to use for uuids
     id_gen: u128,
@@ -219,6 +223,7 @@ trait RadarTracker {
     
     // handle unique id creation
     fn new_id_gen(&mut self) -> u128;
+    fn show_tracks(&self);
     
     fn insert_new_potential_target(&mut self, plot: Option<ScanResult>);
 
@@ -246,18 +251,25 @@ impl RadarTracker for Radar {
         let mut scans: VecDeque<ScanResult> = VecDeque::new();
         debug!("insert_new_potential_target: new plot position: {}", plot.as_ref().unwrap().position);
         scans.push_back(plot.clone().unwrap());
+        let id = self.new_id_gen();
         // populate initial RadarTrack with baseline values
-        let track = RadarTrack {
+        let track = Rc::new(RefCell::new(RadarTrack {
             scans,
             position: plot.as_ref().unwrap().position,
             velocity: plot.as_ref().unwrap().velocity,
             heading: plot.as_ref().unwrap().velocity.y.atan2(plot.as_ref().unwrap().velocity.x),
-            id: self.new_id_gen(),
+            id,
             friendly: false,
-            gate: RadarTrackGate::new(plot.as_ref().unwrap().position, plot.as_ref().unwrap().rssi.abs() * 2.0),
+            gate: RadarTrackGate::new(plot.as_ref().unwrap().position, 50.0),
             contact_tick: current_tick(),
-        };
-        self.potential_targets.insert(track.id, track);
+        }));
+        self.potential_targets.insert(id, track);
+    }
+
+    fn show_tracks(&self) {
+        for (id, track) in &self.potential_targets {
+            track.borrow().gate.draw_gate(*id);
+        }
     }
 
     fn add_detection_point(&mut self, plot: Option<ScanResult>) {
@@ -268,59 +280,29 @@ impl RadarTracker for Radar {
         } else {
             let mut found = false;
             let mut found_id = 0;
-            let mut old_tracks: Vec<u128> = vec![];
+            let mut old_tracks: Vec<u128> = Vec::new();
             // TODO: improve detection point association
             // check radartracks for potential match
-            for k in self.potential_targets.keys() {
-                self.potential_targets.entry(*k); //.and_modify(|e| {
-                                                    //        found = e.check_gate(plot.as_ref().unwrap().position);
-                                                      //      found_id = e.id;
-                                                        //    });
+            for (id, track) in &self.potential_targets {
                 if found {
                     break;
                 }
-                // let t = self.potential_targets.get(k).unwrap();
-                // t.gate.draw_gate();
-                if found {
+                let mut t = track.borrow_mut();
+                if t.check_gate(plot.as_ref().unwrap().position) {
                     debug!("associating new plot with existing target");
-                    // found = true;
+                    found = true;
                     // update current track with new data
                 } else {
                     // check current track lifetime
-                    let delta_tick: f64 = (current_tick() - self.potential_targets.get(&found_id).unwrap().contact_tick).into();
+                    let delta_tick: f64 = (current_tick() - t.contact_tick).into();
 
                     // check if num ticks hits 3 second window, remove outdated track
                     if delta_tick / 60.0 >= 3.0 {
-                        debug!("adding old_track id: {}", k);
-                        old_tracks.push(*k);
+                        debug!("adding old_track id: {}", id);
+                        old_tracks.push(*id);
                     }
                 }
             }
-            // for &id in &self.potential_targets {
-            //     match 
-            // }
-
-            // for (id, track) in &self.potential_targets {
-            //     if found {
-            //         break;
-            //     }
-            //     let mut t = RadarTrack { ..track };
-            //     t.gate.draw_gate();
-            //     if t.check_gate(plot.as_ref().unwrap().position) {
-            //         debug!("associating new plot with existing target");
-            //         found = true;
-            //         // update current track with new data
-            //     } else {
-            //         // check current track lifetime
-            //         let delta_tick: f64 = (current_tick() - t.contact_tick).into();
-
-            //         // check if num ticks hits 3 second window, remove outdated track
-            //         if delta_tick / 60.0 >= 3.0 {
-            //             debug!("adding old_track id: {}", id);
-            //             old_tracks.push(*id);
-            //         }
-            //     }
-            // }
             // clear out of date tracks
             for i in &old_tracks {
                 self.potential_targets.remove(i);
@@ -639,6 +621,7 @@ impl Ship {
         // reset scanner to find next target
         // adjust position to hunting patterns
         self.radar.radar_loop();
+        self.radar.show_tracks();
         self.radar_control();
         self.ship_control();
     }
@@ -827,7 +810,7 @@ impl RadarControl for Ship {
         }
 
         set_radar_heading(radar_heading() + radar_width());
-        set_radar_width(PI / 12.0);
+        set_radar_width(PI / 8.0);
         set_radar_max_distance(10_000.0);
         set_radar_min_distance(25.0);
     }
