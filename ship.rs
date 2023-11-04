@@ -109,15 +109,26 @@ pub struct RadarTrack {
     // need to create a uuid
     id: u128,
 
-    // default will be false, assume all targets are threats unless
-    // we receive explicit radio transmission from friendly, then tag
-    friendly: bool,
+    // track classification
+    class: TrackType,
 
     // gate is the predicted target fence for position estimates
     gate: RadarTrackGate,
 
     // lifetime manager
     contact_tick: u32,
+
+
+}
+
+// classifier to apply to a RadarTrack
+#[derive(Debug)]
+enum TrackType {
+    Tentative,
+    Friend,
+    Foe,
+    Missile,
+
 }
 
 // geometry helpers specific to a single RadarTrack
@@ -126,7 +137,11 @@ trait RadarTrackGeometry {
 
     fn push_plot(&mut self, plot: Option<ScanResult>);
 
+    fn update(&mut self);
+
     fn check_gate(&mut self, point: Vec2) -> bool;
+
+    fn distance_from(&self, point: Vec2) -> f64;
 }
 
 impl RadarTrackGeometry for RadarTrack {
@@ -136,20 +151,49 @@ impl RadarTrackGeometry for RadarTrack {
 
     fn push_plot(&mut self, plot: Option<ScanResult>) {
         self.scans.push_back(plot.unwrap());
+    }
 
-        // update radartrack logic
+    fn update(&mut self) {
+        if self.scans.is_empty() {
+            // no new scans in queue, just update one tick of velocity
+            self.position += self.velocity / 60.0;
+        } else {
+            // we have scans to consider
+            if self.scans.len() == 1 {
+                debug!("one scans to consider for radartrack: {}", self.id);
+                // only one element front and back are the same here
+                let scan = self.scans.pop_front().unwrap();
+                debug!("scan position: {}", scan.position);
+
+                // cur_vel(t-1) - scan.vel(t) => delta_vel
+                // delta_vel needs to be in ticks as well / 2 ticks => 
+                let current_velocity_in_ticks = self.velocity  / 60.0;
+                let acceleration = (current_velocity_in_ticks - (scan.velocity / 60.0)) / 2.0;
+                // ^^ acceleration should be in meters / second / tick (m/s/t)
+                // add velocity in ticks with new acceleration, mult*60.0 should convert back to meters / second
+                let new_velocity = (current_velocity_in_ticks + acceleration) * 60.0;
+                debug!("old velocity: {}", self.velocity);
+                debug!("new velocity: {}", new_velocity);
+                self.velocity = new_velocity;
+                // add acceleration experienced in the last tick to the current estimated position
+                self.position += acceleration;
+            } else {
+                debug!("multiple scans to consider for radartrack: {}", self.id);
+                // multiple scans case
+                // TODO: can this happen? means update wasnt called on this for multiple ticks
+            }
+        }
+
+        // done processing, update RadarTrackGate::center
+        self.gate.update_center(self.position);
     }
 
     fn check_gate(&mut self, point: Vec2) -> bool {
-
-            // X m/s / 60 => Y m/t => Y m/t * delta_tick => velocity per tick scaled to number of ticks
-        let delta_tick: f64 = (current_tick() - self.contact_tick) as f64;
-        let track_velocity_in_ticks = self.velocity / 60.0;
-
-        // estimated velocity since last contact
-        let e_v = track_velocity_in_ticks * delta_tick;
-        self.gate.update_center(e_v);
         self.gate.point_in_gate(point)
+    }
+
+    fn distance_from(&self, point: Vec2) -> f64 {
+        (self.position - point).length()
     }
 }
 
@@ -179,8 +223,8 @@ impl RadarTrackGate {
         draw_text!(p4, 0xff0000, "id: {}", id);
     }
 
-    pub fn update_center(&mut self, est_velocity: Vec2) {
-        self.center += est_velocity;
+    pub fn update_center(&mut self, center: Vec2) {
+        self.center = center;
     }
 
     // find current points of square based on radius or error magnitude
@@ -223,17 +267,24 @@ trait RadarTracker {
     
     // handle unique id creation
     fn new_id_gen(&mut self) -> u128;
+    
+    fn update_tracks(&mut self);
+
     fn show_tracks(&self);
     
     fn insert_new_potential_target(&mut self, plot: Option<ScanResult>);
 
     // used to add a new ScanResult plot to the potential_targets data
     fn add_detection_point(&mut self, plot: Option<ScanResult>);
+
+    fn get_closest_target_to_point(&self, point: Vec2);
 }
 
 // impl against Radar struct to remove dependency on Ship
 impl RadarTracker for Radar {
     fn radar_loop(&mut self) {
+        self.update_tracks();
+        self.show_tracks();
         if let Some(plot) = scan() {
             self.add_detection_point(Some(plot));
         }
@@ -259,7 +310,7 @@ impl RadarTracker for Radar {
             velocity: plot.as_ref().unwrap().velocity,
             heading: plot.as_ref().unwrap().velocity.y.atan2(plot.as_ref().unwrap().velocity.x),
             id,
-            friendly: false,
+            class: TrackType::Tentative,
             gate: RadarTrackGate::new(plot.as_ref().unwrap().position, 50.0),
             contact_tick: current_tick(),
         }));
@@ -272,8 +323,24 @@ impl RadarTracker for Radar {
         }
     }
 
+    // iterate over existing tracks and call their update method
+    fn update_tracks(&mut self) {
+        for (id, track) in &self.potential_targets {
+            track.borrow_mut().update();
+        }
+    }
+    fn get_closest_target_to_point(&self, point: Vec2) {
+        let mut min_distance = -1.0;
+
+        for (id, track) in &self.potential_targets {
+            // track.borrow()
+        }
+
+    }
+
     fn add_detection_point(&mut self, plot: Option<ScanResult>) {
         debug!("adding detection point");
+        debug!("potential_targets.len: {}", self.potential_targets.len());
         if self.potential_targets.is_empty() {
             // first result, no values to compare with
             self.insert_new_potential_target(plot);
@@ -292,12 +359,13 @@ impl RadarTracker for Radar {
                     debug!("associating new plot with existing target");
                     found = true;
                     // update current track with new data
+                    t.push_plot(plot.clone())
                 } else {
                     // check current track lifetime
                     let delta_tick: f64 = (current_tick() - t.contact_tick).into();
 
-                    // check if num ticks hits 3 second window, remove outdated track
-                    if delta_tick / 60.0 >= 3.0 {
+                    // check if num ticks hits 2 second window, remove outdated track
+                    if delta_tick / 60.0 >= 2.0 {
                         debug!("adding old_track id: {}", id);
                         old_tracks.push(*id);
                     }
@@ -330,6 +398,10 @@ pub struct Ship {
     // does the ship have a target
     target_lock: bool,
 
+    // TODO: future members
+    // current_target_position: Option<Vec2>,
+    // current_target_velocity: Option<Vec2>,
+
     // the current target
     target: Option<ScanResult>,
 
@@ -357,6 +429,8 @@ trait FigherGeometry {
     fn heading_to_target(&self, target: Vec2);
 
     fn basic_maneuver_to_target(&self);
+
+    // fn set_current_target(&mut self, target: Vec2, target_velocity: Vec2);
 }
 
 impl FigherGeometry for Ship {
@@ -621,7 +695,6 @@ impl Ship {
         // reset scanner to find next target
         // adjust position to hunting patterns
         self.radar.radar_loop();
-        self.radar.show_tracks();
         self.radar_control();
         self.ship_control();
     }
