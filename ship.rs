@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 const BULLET_SPEED: f64 = 1000.0; // m/s
 const E: f64 = f64::EPSILON;
+const STICKY_TARGET_TICKS: u32 = 360;
 
 #[derive(Debug)]
 enum Quadrant {
@@ -428,6 +429,8 @@ pub struct Ship {
 
     // ship radar component
     radar: Radar,
+
+    sticky_target_ticks: u32,
 }
 trait FigherGeometry {
     // act upon target with deadly force
@@ -465,12 +468,17 @@ impl FigherGeometry for Ship {
     // TODO: this maybe should be changed to setup an attack orbit
     fn engage_target(&self) {
         if !self.target.is_none() {
+            let targ_v = self.target.as_ref().unwrap().velocity;
+            let targ_p = self.target.as_ref().unwrap().position;
             // let lead_point = self.get_target_lead(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity);
             let lead_point = self.get_target_lead_in_ticks(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity);
-
-            // draws line from target point to their velocity
+            // let lead_point = quadratic_lead(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity);
             draw_line(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity, 0xffff00);
-            debug!("lead_point: {}", lead_point);
+            let target_heading = targ_v.y.atan2(targ_v.x);
+            let p4: Vec2 = Vec2::new(targ_p.x + 50.0 / 2.0, targ_p.y + 50.0 / 2.0);
+            debug!("heading:{}", target_heading);
+            draw_triangle(targ_p, target_heading, 0x0f0f0f);
+            draw_triangle(self.target.as_ref().unwrap().position, 50.0, 0x00ff00);
             draw_line(position(), lead_point, 0xff00f0);
             self.turn_to_lead_target(lead_point);
         }
@@ -485,26 +493,31 @@ impl FigherGeometry for Ship {
         // debug!("self.angle {}", self.get_angle_to_target());
         // let current_diff = angle_diff(heading(), self.get_angle_to_target());
         let current_diff = angle_diff(heading(), lead.angle());
-        let distance = self.get_target_distance();
+        // let distance = self.get_target_distance();
+        if current_diff.abs() > 0.1 {
+            torque(calculate_angular_velocity(20.0, current_diff));
+        } else {
+            torque(calculate_angular_velocity(2_000.0, current_diff));
+            fire(0);
+        }
         // if closer turn differently
         // if further, turn differentlyer
-        if distance > 500.0 {
-            if current_diff.abs() > 0.01 {
-                torque(calculate_angular_velocity(69.0, current_diff));
-            } else {
-                turn(calculate_angular_velocity(50_000.0, current_diff));
-                fire(0);
-            }
-        } else {
-            if current_diff.abs() > 0.3 {
-                torque(calculate_angular_velocity(50.0, current_diff));
-            } else if current_diff.abs() > 0.1 {
-                torque(calculate_angular_velocity(1.0, current_diff));
-            } else {
-                torque(calculate_angular_velocity(5_000.0, current_diff));
-                fire(0);
-            }
-        }
+        // torque(calculate_angular_velocity(current_diff.abs()*25.0, current_diff));
+        // if current_diff.abs() < 0.1 {
+        //     fire(0);
+        // }
+        // if distance > 500.0 {
+        //     if current_diff.abs() > 0.1 {
+        //         torque(calculate_angular_velocity(25.0, current_diff));
+        //     } else {
+        //         torque(calculate_angular_velocity(2_000.0, current_diff));
+        //         fire(0);
+        //     }
+        // } else {
+            // if current_diff.abs() > 0.3 {
+            //     torque(calculate_angular_velocity(30.0, current_diff));
+            // } else
+        // }
     }
 
     fn heading_to_target(&self, target: Vec2) {
@@ -601,7 +614,8 @@ impl Ship {
                 ticks_since_contact: 0,
                 potential_targets: HashMap::new(),
                 id_gen: 0,
-            }
+            },
+            sticky_target_ticks: STICKY_TARGET_TICKS,
         }
     }
 
@@ -621,9 +635,6 @@ impl Ship {
         debug!("random dir: {}", dir);
         let mag = 42.20;
         accelerate(dir * mag);
-
-        // set ship to searching for target
-        // self.set_state(ShipState::Searching);
     }
 
     pub fn searching_for_target(&mut self) {
@@ -634,7 +645,8 @@ impl Ship {
 
     pub fn engaging_target(&mut self) {
         debug!("engaging target");
-        // TODO: comment/uncomment to make ship actually work again
+
+        // TODO: 
         self.basic_maneuver_to_target();
         self.engage_target();
 
@@ -720,9 +732,22 @@ impl Ship {
                 ShipState::Engaged => { /* do nothing */ },
                 _ => { self.set_state(ShipState::Engaged); }
             }
-            let t = self.radar.get_closest_target_to_point(position());
-            debug!("setting latest target values");
-            self.set_current_target(t);
+            
+            // if !self.target.is_none() {
+            //     if self.sticky_target_ticks > 0 {
+            //         debug!("sticky ticks remaining: {}", self.sticky_target_ticks);
+            //         self.sticky_target_ticks -= 1;
+            //     } else {
+            //         debug!("setting new target");
+            //         self.sticky_target_ticks = STICKY_TARGET_TICKS;
+            //         debug!("setting latest target values");
+            //         self.set_current_target(self.radar.get_closest_target_to_point(position()));
+            //     }
+            // } else {
+            //     // first target
+            //     debug!("getting FIRST target");
+            // }
+            self.set_current_target(self.radar.get_closest_target_to_point(position()));
         }
         self.radar_control();
         self.ship_control();
@@ -853,7 +878,6 @@ impl RadarControl for Ship {
     }
 
     fn radar_control(&mut self) {
-        self.radar_scan();
         match self.get_state() {
             ShipState::NoTarget => self.standard_radar_sweep(),
             ShipState::Searching => self.standard_radar_sweep(),
