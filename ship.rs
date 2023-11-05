@@ -280,7 +280,9 @@ trait RadarTracker {
     // used to add a new ScanResult plot to the potential_targets data
     fn add_detection_point(&mut self, plot: Option<ScanResult>);
 
-    fn get_closest_target_to_point(&self, point: Vec2) -> ScanResult;
+    fn get_closest_target_to_point(&self, point: Vec2) -> u128;
+
+    // fn get_track_mut(&mut self, id: u128) -> &RadarTrack;
 }
 
 // impl against Radar struct to remove dependency on Ship
@@ -336,7 +338,7 @@ impl RadarTracker for Radar {
             track.borrow_mut().update();
         }
     }
-    fn get_closest_target_to_point(&self, point: Vec2) -> ScanResult {
+    fn get_closest_target_to_point(&self, point: Vec2) -> u128 {
         let mut distance: f64 = 90_000_000.0;
         let mut target_id: u128 = 0;
 
@@ -348,16 +350,12 @@ impl RadarTracker for Radar {
                 target_id = *id;
             }
         }
-        let t = self.potential_targets.get(&target_id);
-        debug!("target id: {target_id}");
-        ScanResult {
-            position: t.unwrap().borrow().position,
-            velocity: t.unwrap().borrow().velocity,
-            class: Class::Fighter,
-            rssi: 0.0,
-            snr: 0.0
-        }
+        target_id
     }
+
+    // fn get_track_mut(&mut self, id: u128) -> &RadarTrack {
+    //     self.potential_targets.get_mut(id);
+    // }
 
     fn add_detection_point(&mut self, plot: Option<ScanResult>) {
         debug!("adding detection point");
@@ -380,7 +378,8 @@ impl RadarTracker for Radar {
                     debug!("associating new plot with existing target");
                     found = true;
                     // update current track with new data
-                    t.push_plot(plot.clone())
+                    t.push_plot(plot.clone());
+                    t.update();
                 } else {
                     // check current track lifetime
                     let delta_tick: f64 = (current_tick() - t.contact_tick).into();
@@ -431,7 +430,14 @@ pub struct Ship {
     radar: Radar,
 
     sticky_target_ticks: u32,
+
+    rotational_throttle: f64,
+
+    // TODO:
+    // lateral_throttle
+    // longitudinal_throttle
 }
+
 trait FigherGeometry {
     // act upon target with deadly force
     fn engage_target(&self);
@@ -450,6 +456,8 @@ trait FigherGeometry {
     fn basic_maneuver_to_target(&self);
 
     fn set_current_target(&mut self, target: ScanResult);
+
+    // fn new_target_lead(&self) -> Vec2;
 }
 
 impl FigherGeometry for Ship {
@@ -471,16 +479,17 @@ impl FigherGeometry for Ship {
             let targ_v = self.target.as_ref().unwrap().velocity;
             let targ_p = self.target.as_ref().unwrap().position;
             // let lead_point = self.get_target_lead(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity);
-            let lead_point = self.get_target_lead_in_ticks(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity);
-            // let lead_point = quadratic_lead(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity);
-            draw_line(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity, 0xffff00);
-            let target_heading = targ_v.y.atan2(targ_v.x);
-            let p4: Vec2 = Vec2::new(targ_p.x + 50.0 / 2.0, targ_p.y + 50.0 / 2.0);
-            debug!("heading:{}", target_heading);
-            draw_triangle(targ_p, target_heading, 0x0f0f0f);
+            // let lead_point = self.get_target_lead_in_ticks(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity);
+            // // let lead_point = quadratic_lead(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity);
+            // draw_line(self.target.as_ref().unwrap().position, self.target.as_ref().unwrap().velocity, 0xffff00);
+            // let target_heading = targ_v.y.atan2(targ_v.x);
+            // let p4: Vec2 = Vec2::new(targ_p.x + 50.0 / 2.0, targ_p.y + 50.0 / 2.0);
+
+            // debug!("heading:{}", target_heading);
+            // draw_triangle(targ_p, target_heading, 0x0f0f0f);
             draw_triangle(self.target.as_ref().unwrap().position, 50.0, 0x00ff00);
-            draw_line(position(), lead_point, 0xff00f0);
-            self.turn_to_lead_target(lead_point);
+            // draw_line(position(), lead_point, 0xff00f0);
+            // self.turn_to_lead_target(c);
         }
     }
 
@@ -616,6 +625,7 @@ impl Ship {
                 id_gen: 0,
             },
             sticky_target_ticks: STICKY_TARGET_TICKS,
+            rotational_throttle: 0.0,
         }
     }
 
@@ -647,8 +657,8 @@ impl Ship {
         debug!("engaging target");
 
         // TODO: 
-        self.basic_maneuver_to_target();
-        self.engage_target();
+        // self.basic_maneuver_to_target();
+        // self.engage_target();
 
         // TODO: broken stuff below
         // if self.get_target_distance() > 1000.0 {
@@ -717,7 +727,95 @@ impl Ship {
         }
     }
 
+    pub fn snap_to_heading(&mut self, angle: f64) {
+        debug!("heading: {}", heading());
+        debug!("target angle: {}", angle);
+        let delta = angle_diff(heading(), angle);
+
+        // amount of radians for max acceleration
+        let halfway = delta / 2.0;
+
+        debug!("delta angle: {}", delta);
+
+        let max_angular_acceleration_ticks = max_angular_acceleration() / 60.0;
+        let future_heading: f64 = 0.0;
+        let num_ticks = 1;
+        // check sign of 
+        if delta > 0.0 {
+            while angle_diff(heading(), future_heading) > 0.0 {
+                future_heading += fu max_angular_acceleration_ticks
+            }
+        } else {
+
+        }
+
+        // note: this correctly defines future heading per tick, so far so good
+        // let future_heading = heading() + (angular_velocity() / 60.0);
+        // debug!("future heading: {}", future_heading);
+
+        // maybe not so useful actually
+        // actually this could end up going beyond target calculations
+        // let future_delta = angle_diff(heading(), future_heading);
+        // debug!("future delta: {}", future_delta);
+
+        debug!("angular velocity: {}", angular_velocity());
+
+        // if delta > 0.0 {
+        //     // positive delta, turning ccw
+
+        //     if future_heading < angle {
+        //         // future heading will be beyond target angle
+        //         self.rotational_throttle = 1.0; // counter throttle
+        //     } else {
+        //         self.rotational_throttle = -1.0;
+        //     }
+        // } else {
+        //     // negative delta, turning cw
+        //     if future_heading > angle {
+        //         // future heading will be beyond target angle
+        //         self.rotational_throttle = -1.0; // counter throttle
+        //     } else {
+        //         self.rotational_throttle = 1.0; // counter throttle
+        //     }
+        // }
+        // e.g. delta => -0.14 radians
+        // current_velocity in radians per second per second per tick, e.g. => 0.0
+        // throttle => -1.0
+        // 
+
+        // fastest possible snap to heading
+        // if
+
+        // count number of ticks to rotate to target
+            // based on current angular velocity
+        // find number of ticks to stop on target at max deceleration
+
+        
+        // after calculations are done, a throttle value will exist which determines next torque value
+        torque(self.rotational_throttle * max_angular_acceleration());
+    }
+
     pub fn tick(&mut self) {
+        debug!("target: {}", target());
+        debug!("target velocity: {}", target_velocity());
+        draw_line(position(), target(), 0xffffff);
+        draw_line(target(), target() + target_velocity(), 0xff0000);
+
+
+        // for completeness even though velocity() is 0,0 for this tutorial
+        let delta_velocity = target_velocity() - velocity();
+        let ab = (target() - position()).length();
+        let cat = target() + target_velocity();
+        let bc = cat.length();
+        draw_line(position(), cat, 0xff0000);
+        let head = Vec2::new(heading().cos(), heading().sin());
+        draw_line(position(), head*100.0, 0x00ff00);
+
+        self.snap_to_heading(cat.angle());
+        draw_line(position(), 69.0*Vec2::new(cat.angle().cos(), cat.angle().sin()), 0x0f0fff);
+        // turn(270.0 * angle_diff(heading(), cat.angle()));
+
+        fire(0);
         // pseudo code for ship loop when target identified in radar scope
         // check acquired target distance
         // check for FoF tags (future)
@@ -726,31 +824,33 @@ impl Ship {
         // destroy target
         // reset scanner to find next target
         // adjust position to hunting patterns
-        self.radar.radar_loop();
-        if self.radar.has_contacts() {
-            match self.get_state() {
-                ShipState::Engaged => { /* do nothing */ },
-                _ => { self.set_state(ShipState::Engaged); }
-            }
+        // self.radar.radar_loop();
+        // if self.radar.has_contacts() {
+        //     match self.get_state() {
+        //         ShipState::Engaged => { /* do nothing */ },
+        //         _ => { self.set_state(ShipState::Engaged); }
+        //     }
             
-            // if !self.target.is_none() {
-            //     if self.sticky_target_ticks > 0 {
-            //         debug!("sticky ticks remaining: {}", self.sticky_target_ticks);
-            //         self.sticky_target_ticks -= 1;
-            //     } else {
-            //         debug!("setting new target");
-            //         self.sticky_target_ticks = STICKY_TARGET_TICKS;
-            //         debug!("setting latest target values");
-            //         self.set_current_target(self.radar.get_closest_target_to_point(position()));
-            //     }
-            // } else {
-            //     // first target
-            //     debug!("getting FIRST target");
-            // }
-            self.set_current_target(self.radar.get_closest_target_to_point(position()));
-        }
-        self.radar_control();
-        self.ship_control();
+        //     // if !self.target.is_none() {
+        //     //     if self.sticky_target_ticks > 0 {
+        //     //         debug!("sticky ticks remaining: {}", self.sticky_target_ticks);
+        //     //         self.sticky_target_ticks -= 1;
+        //     //     } else {
+        //     //         debug!("setting new target");
+        //     //         self.sticky_target_ticks = STICKY_TARGET_TICKS;
+        //     //         debug!("setting latest target values");
+        //     //         self.set_current_target(self.radar.get_closest_target_to_point(position()));
+        //     //     }
+        //     // } else {
+        //     //     // first target
+        //     //     debug!("getting FIRST target");
+        //     // }
+        //     // let id = self.radar.get_closest_target_to_point(position());
+        //     // debug!("current target id: {}", id);
+        //     // self.set_current_target(self.radar.get_track_mut(id));
+        // }
+        // self.radar_control();
+        // self.ship_control();
     }
 }
 
