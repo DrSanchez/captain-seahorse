@@ -267,6 +267,8 @@ trait RadarTracker {
     
     // handle unique id creation
     fn new_id_gen(&mut self) -> u128;
+
+    fn has_contacts(&self) -> bool;
     
     fn update_tracks(&mut self);
 
@@ -277,7 +279,7 @@ trait RadarTracker {
     // used to add a new ScanResult plot to the potential_targets data
     fn add_detection_point(&mut self, plot: Option<ScanResult>);
 
-    fn get_closest_target_to_point(&self, point: Vec2);
+    fn get_closest_target_to_point(&self, point: Vec2) -> ScanResult;
 }
 
 // impl against Radar struct to remove dependency on Ship
@@ -296,6 +298,10 @@ impl RadarTracker for Radar {
         self.id_gen += 1;
         debug!("new_id_gen: next: {}, incremented: {}", next, self.id_gen);
         next
+    }
+
+    fn has_contacts(&self) -> bool {
+        !self.potential_targets.is_empty()
     }
 
     fn insert_new_potential_target(&mut self, plot: Option<ScanResult>) {
@@ -329,13 +335,27 @@ impl RadarTracker for Radar {
             track.borrow_mut().update();
         }
     }
-    fn get_closest_target_to_point(&self, point: Vec2) {
-        let mut min_distance = -1.0;
+    fn get_closest_target_to_point(&self, point: Vec2) -> ScanResult {
+        let mut distance: f64 = 90_000_000.0;
+        let mut target_id: u128 = 0;
 
+        // iterate over potential targets looking for 
         for (id, track) in &self.potential_targets {
-            // track.borrow()
+            let dist = track.borrow().distance_from(point);
+            if dist < distance {
+                distance = dist;
+                target_id = *id;
+            }
         }
-
+        let t = self.potential_targets.get(&target_id);
+        debug!("target id: {target_id}");
+        ScanResult {
+            position: t.unwrap().borrow().position,
+            velocity: t.unwrap().borrow().velocity,
+            class: Class::Fighter,
+            rssi: 0.0,
+            snr: 0.0
+        }
     }
 
     fn add_detection_point(&mut self, plot: Option<ScanResult>) {
@@ -365,7 +385,7 @@ impl RadarTracker for Radar {
                     let delta_tick: f64 = (current_tick() - t.contact_tick).into();
 
                     // check if num ticks hits 2 second window, remove outdated track
-                    if delta_tick / 60.0 >= 2.0 {
+                    if delta_tick / 60.0 >= 1.0 {
                         debug!("adding old_track id: {}", id);
                         old_tracks.push(*id);
                     }
@@ -399,10 +419,6 @@ pub struct Ship {
     target_lock: bool,
 
     // TODO: future members
-    // current_target_position: Option<Vec2>,
-    // current_target_velocity: Option<Vec2>,
-
-    // the current target
     target: Option<ScanResult>,
 
     // current ship state
@@ -430,7 +446,7 @@ trait FigherGeometry {
 
     fn basic_maneuver_to_target(&self);
 
-    // fn set_current_target(&mut self, target: Vec2, target_velocity: Vec2);
+    fn set_current_target(&mut self, target: ScanResult);
 }
 
 impl FigherGeometry for Ship {
@@ -458,6 +474,10 @@ impl FigherGeometry for Ship {
             draw_line(position(), lead_point, 0xff00f0);
             self.turn_to_lead_target(lead_point);
         }
+    }
+
+    fn set_current_target(&mut self, target: ScanResult) {
+        self.target = Some(target);
     }
 
     fn turn_to_lead_target(&self, lead: Vec2) {
@@ -603,7 +623,7 @@ impl Ship {
         accelerate(dir * mag);
 
         // set ship to searching for target
-        self.set_state(ShipState::Searching);
+        // self.set_state(ShipState::Searching);
     }
 
     pub fn searching_for_target(&mut self) {
@@ -615,8 +635,8 @@ impl Ship {
     pub fn engaging_target(&mut self) {
         debug!("engaging target");
         // TODO: comment/uncomment to make ship actually work again
-        // self.basic_maneuver_to_target();
-        // self.engage_target();
+        self.basic_maneuver_to_target();
+        self.engage_target();
 
         // TODO: broken stuff below
         // if self.get_target_distance() > 1000.0 {
@@ -695,6 +715,15 @@ impl Ship {
         // reset scanner to find next target
         // adjust position to hunting patterns
         self.radar.radar_loop();
+        if self.radar.has_contacts() {
+            match self.get_state() {
+                ShipState::Engaged => { /* do nothing */ },
+                _ => { self.set_state(ShipState::Engaged); }
+            }
+            let t = self.radar.get_closest_target_to_point(position());
+            debug!("setting latest target values");
+            self.set_current_target(t);
+        }
         self.radar_control();
         self.ship_control();
     }
@@ -797,7 +826,7 @@ impl RadarControl for Ship {
 
         if object.is_none() {
             self.target = None;
-            self.set_state(ShipState::Searching);
+            // self.set_state(ShipState::Searching);
         } else {
             self.target = Some(ScanResult { ..object.unwrap() });
             self.set_state(ShipState::Engaged);
@@ -908,7 +937,7 @@ impl RadarControl for Ship {
             debug!("no target, incrementing radar ticks: {}", self.radar.ticks_since_contact);
             // no target this scan, increment ticks
             self.radar.ticks_since_contact += 1;
-            self.set_state(ShipState::Searching);
+            // self.set_state(ShipState::Searching);
         }
 
     }
