@@ -444,7 +444,7 @@ pub struct Rotator {
 }
 
 trait FigherGeometry {
-    fn engage_target(&self);
+    fn engage_target(&mut self);
 
     fn seconds_to_intercept(&self) -> f64;
 
@@ -490,15 +490,21 @@ impl FigherGeometry for Ship {
     }
     // engage fighter geometry with target
     // TODO: this maybe should be changed to setup an attack orbit
-    fn engage_target(&self) {
+    fn engage_target(&mut self) {
         if !self.target.is_none() {
-            // let lead_point = self.quadratic_lead(self.target.as_ref().unwrap().borrow().position, self.target.as_ref().unwrap().borrow().velocity);
-            let lead_point = self.get_adjusted_target_lead_in_ticks(self.target.as_ref().unwrap().borrow().position, self.target.as_ref().unwrap().borrow().velocity);
+            let lead_point = self.quadratic_lead(self.target.as_ref().unwrap().borrow().position, self.target.as_ref().unwrap().borrow().velocity);
+            // let lead_point = self.get_target_lead_in_ticks(self.target.as_ref().unwrap().borrow().position, self.target.as_ref().unwrap().borrow().velocity);
+            // let lead_point = self.get_adjusted_target_lead_in_ticks(self.target.as_ref().unwrap().borrow().position, self.target.as_ref().unwrap().borrow().velocity);
             draw_triangle(self.target.as_ref().unwrap().borrow().position, 50.0, 0x00ff00);
             draw_line(position_fixed(), lead_point, 0xff00f0);
             // self.turn_to_lead_target(c);
-            self.turn_to_lead_target_aggressive(lead_point);
-            // self.turn_to_lead_target(lead_point);
+
+            // if self.get_target_distance() > 2000.0 {
+            // self.snap_to_heading(lead_point.angle());
+            self.turn_to_lead_target(lead_point);
+            // } else {
+            //     self.turn_to_lead_target_aggressive(lead_point);
+            // }
         }
     }
 
@@ -514,7 +520,7 @@ impl FigherGeometry for Ship {
             debug!("turning angle velocity: {}", next_ang_v);
             torque(next_ang_v);
         } else {
-            let next_ang_v = calculate_angular_velocity(3_000.0, current_diff);
+            let next_ang_v = calculate_angular_velocity(1_000.0, current_diff);
             debug!("firing angle velocity: {}", next_ang_v);
             torque(next_ang_v);
             fire(0);
@@ -524,11 +530,11 @@ impl FigherGeometry for Ship {
     fn turn_to_lead_target_aggressive(&self, lead: Vec2) {
         let current_diff = angle_diff(heading(), lead.angle());
         if current_diff.abs() > 0.1 {
-            let next_ang_v = calculate_angular_velocity(90.0, current_diff);
+            let next_ang_v = calculate_angular_velocity(40.0, current_diff);
             debug!("turning angle velocity: {}", next_ang_v);
             torque(next_ang_v);
         } else {
-            let next_ang_v = calculate_angular_velocity(60_000.0, current_diff);
+            let next_ang_v = calculate_angular_velocity(5_000.0, current_diff);
             debug!("firing angle velocity: {}", next_ang_v);
             torque(next_ang_v);
             fire(0);
@@ -820,7 +826,7 @@ impl Ship {
         // let bc = cat.length();
         // draw_line(position_fixed(), cat, 0xff0000);
         let head = Vec2::new(heading().cos(), heading().sin());
-        draw_line(position_fixed(), head*1000.0, 0x00ff00);
+        draw_line(position_fixed(), head*1000.0, 0x00ffff);
 
         // self.snap_to_heading(cat.angle());
         // draw_line(position_fixed(), 69.0*Vec2::new(cat.angle().cos(), cat.angle().sin()), 0x0f0fff);
