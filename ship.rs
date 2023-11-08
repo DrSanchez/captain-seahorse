@@ -17,11 +17,6 @@
 //         }
 //     }
 // }
-
-fn turn_to(target_heading: f64) {
-    let heading_error = angle_diff(heading(), target_heading);
-    turn(10.0 * heading_error);
-}
 use oort_api::prelude::*;
 use std::collections::VecDeque;
 use std::collections::HashMap;
@@ -31,6 +26,73 @@ use std::rc::Rc;
 const BULLET_SPEED: f64 = 1000.0; // m/s
 const E: f64 = f64::EPSILON;
 const STICKY_TARGET_TICKS: u32 = 1;
+
+pub enum Ship {
+    Fighter(Fighter),
+    Missile(Missile),
+}
+
+// game loop router
+impl Ship {
+    pub fn new() -> Ship {
+        match class() {
+            Class::Fighter => Ship::Fighter(Fighter::new()),
+            Class::Missile => Ship::Missile(Missile::new()),
+            _ => { todo!() },//TODO: future stuff
+        }
+    }
+    pub fn tick(&mut self) {
+        match self {
+            Ship::Fighter(fighter) => { fighter.tick() },
+            Ship::Missile(missile) => { missile.tick() },
+            _ => { () },//TODO: future ticks
+        }
+    }
+}
+
+struct Missile {
+    radio_target: Vec2,
+    radar: Radar,
+}
+
+impl Missile {
+    pub fn new() -> Self {
+        Missile {
+            radio_target: Vec2::new(0.0, 0.0),
+            radar: Radar {
+                id_gen: 0,
+                potential_targets: HashMap::new(),
+                ticks_since_contact: 0,
+            }
+        }
+    }
+    pub fn standard_radar_sweep(&mut self) {
+        // if we've been looking for a while, look harder
+        set_radar_heading(radar_heading() + radar_width());
+        set_radar_width(PI / 4.0);
+        set_radar_max_distance(10_000.0);
+        set_radar_min_distance(25.0);
+    }
+    pub fn tick(&mut self) {
+        // from initial tutorial hint
+        self.standard_radar_sweep();
+        self.radar.radar_loop();
+        if let Some(contact) = scan() {
+            let dp = contact.position - position();
+            let dv = contact.velocity - velocity();
+            turn_to(dp.angle());
+            accelerate(100.0 * (dp + dv));
+            if dp.length() < 20.0 {
+                explode();
+            }
+        }
+    }
+}
+
+fn turn_to(target_heading: f64) {
+    let heading_error = angle_diff(heading(), target_heading);
+    turn(10.0 * heading_error);
+}
 
 #[derive(Debug)]
 enum Quadrant {
@@ -440,7 +502,7 @@ pub struct Radio {
     message_queue: VecDeque<String>,
 }
 
-pub struct Ship {
+pub struct Fighter {
     // does the ship have a target
     target_lock: bool,
 
@@ -492,7 +554,7 @@ trait FigherGeometry {
     fn quadratic_lead(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2;
 }
 
-impl FigherGeometry for Ship {
+impl FigherGeometry for Fighter {
     fn shoot(&self) {
         if self.get_target_distance() < 1000.0 {
             fire(0);
@@ -664,9 +726,9 @@ impl FigherGeometry for Ship {
 fn position_fixed() -> Vec2 {
     position() - vec2(1.0, 0.0).rotate(heading()) * 1.33333333
 }
-impl Ship {
-    pub fn new() -> Ship {
-        Ship {
+impl Fighter {
+    pub fn new() -> Self {
+        Fighter {
             target_lock: false,
             target: None,
             state: ShipState::NoTarget,
@@ -686,6 +748,7 @@ impl Ship {
             },
         }
     }
+    
     pub fn set_state(&mut self, state: ShipState) {
         self.state = state;
     }
@@ -1017,7 +1080,7 @@ trait RadarControl {
     fn get_adjusted_target_lead_in_ticks(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2;
 }
 
-impl RadarControl for Ship {
+impl RadarControl for Fighter {
     fn lock_radar_to_target(&self) {
         if self.target_lock {
             let target_distance = self.get_target_distance();
