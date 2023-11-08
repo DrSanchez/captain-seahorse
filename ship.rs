@@ -1,3 +1,27 @@
+// Tutorial: Missiles
+// Destroy the enemy ship with your missiles.
+// Hint: https://en.wikipedia.org/wiki/Proportional_navigation
+//     pub fn tick(&mut self) {
+//         if class() == Class::Missile {
+//             if let Some(contact) = scan() {
+//                 let dp = contact.position - position();
+//                 let dv = contact.velocity - velocity();
+//                 turn_to(dp.angle());
+//                 accelerate(dp + dv);
+//                 if dp.length() < 20.0 {
+//                     explode();
+//                 }
+//             }
+//         } else {
+//             fire(1);
+//         }
+//     }
+// }
+
+fn turn_to(target_heading: f64) {
+    let heading_error = angle_diff(heading(), target_heading);
+    turn(10.0 * heading_error);
+}
 use oort_api::prelude::*;
 use std::collections::VecDeque;
 use std::collections::HashMap;
@@ -751,6 +775,7 @@ impl Ship {
     }
 
     pub fn ship_control(&mut self) {
+        // TODO: hmmm
         match self.get_state() {
             ShipState::NoTarget => self.no_target(),
             ShipState::Searching => self.searching_for_target(),
@@ -758,6 +783,35 @@ impl Ship {
             ShipState::OutOfTargetRange => self.out_of_range_target(),
             ShipState::OutOfRadarRange => self.out_of_radar_range(),
         }
+        
+        self.radar.radar_loop();
+        if self.radar.has_contacts() {
+            match self.get_state() {
+                ShipState::Engaged => { () },
+                _ => { self.set_state(ShipState::Engaged); }
+            }
+            
+            if self.target.is_some() {
+                if self.sticky_target_ticks > 0 {
+                    debug!("sticky ticks remaining: {}", self.sticky_target_ticks);
+                    self.sticky_target_ticks -= 1;
+                } else {
+                    debug!("setting new target");
+                    self.sticky_target_ticks = STICKY_TARGET_TICKS;
+                    debug!("setting latest target values");
+                    let id = self.radar.get_closest_target_to_point(position_fixed());
+                    let track = self.radar.get_track(id);
+                    self.set_current_target(track);
+                }
+            } else {
+                // first target
+                debug!("getting FIRST target");
+                let id = self.radar.get_closest_target_to_point(position_fixed());
+                    let track = self.radar.get_track(id);
+                    self.set_current_target(track);
+            }
+        }
+        self.radar_control();
     }
 
     pub fn snap_to_heading(&mut self, angle: f64) {
@@ -826,6 +880,20 @@ impl Ship {
         torque(self.rotation.throttle * max_angular_acceleration());
     }
 
+    pub fn missile_control(&mut self) {
+        // self.radar.radar_loop();
+        // self.fly_to_target();
+        if let Some(contact) = scan() {
+            let dp = contact.position - position();
+            let dv = contact.velocity - velocity();
+            turn_to(dp.angle());
+            accelerate(dp + dv);
+            if dp.length() < 20.0 {
+                explode();
+            }
+        }
+    }
+
     pub fn tick(&mut self) {
         // debug!("target: {}", target());
         // debug!("target velocity: {}", target_velocity());
@@ -859,35 +927,23 @@ impl Ship {
         // destroy target
         // reset scanner to find next target
         // adjust position to hunting patterns
-        self.radar.radar_loop();
-        if self.radar.has_contacts() {
-            match self.get_state() {
-                ShipState::Engaged => { /* do nothing */ },
-                _ => { self.set_state(ShipState::Engaged); }
-            }
-            
-            if self.target.is_some() {
-                if self.sticky_target_ticks > 0 {
-                    debug!("sticky ticks remaining: {}", self.sticky_target_ticks);
-                    self.sticky_target_ticks -= 1;
-                } else {
-                    debug!("setting new target");
-                    self.sticky_target_ticks = STICKY_TARGET_TICKS;
-                    debug!("setting latest target values");
-                    let id = self.radar.get_closest_target_to_point(position_fixed());
-                    let track = self.radar.get_track(id);
-                    self.set_current_target(track);
+
+        match class() {
+            Class::Missile => {
+                self.missile_control();
+            },
+            Class::Fighter => {
+                self.ship_control();
+
+                // if we have a target just start launching missiles!
+                if self.target.is_some() {
+                    fire(1);
                 }
-            } else {
-                // first target
-                debug!("getting FIRST target");
-                let id = self.radar.get_closest_target_to_point(position_fixed());
-                    let track = self.radar.get_track(id);
-                    self.set_current_target(track);
+            },
+            _ => {
+                ()
             }
         }
-        self.radar_control();
-        self.ship_control();
     }
 }
 
