@@ -22,6 +22,7 @@ use std::collections::VecDeque;
 use std::collections::HashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::rc::Weak;
 
 const BULLET_SPEED: f64 = 1000.0; // m/s
 const E: f64 = f64::EPSILON;
@@ -51,7 +52,7 @@ impl Ship {
 }
 
 struct Missile {
-    target: Option<Rc<RefCell<RadarTrack>>>,
+    target: Option<Weak<RefCell<RadarTrack>>>,
     sticky_target_ticks: u32,
     radar: Radar,
 }
@@ -96,15 +97,15 @@ impl Missile {
                 self.target = Some(self.radar.get_track(id));
             }
 
-            let dp = get_target_lead_in_ticks(self.target.as_ref().unwrap().borrow().position, self.target.as_ref().unwrap().borrow().velocity);
+            let dp = get_target_lead_in_ticks(self.target.unpack().borrow().position, self.target.unpack().borrow().velocity);
 
             // let dp = self.target.as_ref().unwrap().borrow().position - position();
-            let dv = self.target.as_ref().unwrap().borrow().velocity - velocity();
+            let dv = self.target.unpack().borrow().velocity - velocity();
             turn_to(dp.angle());
 
             draw_line(position(), dp, 0xff0000);
-            draw_line(self.target.as_ref().unwrap().borrow().position, self.target.as_ref().unwrap().borrow().position + dv, 0xffffff);
-            if (self.target.as_ref().unwrap().borrow().position - position()).length() > 1000.0 {
+            draw_line(self.target.unpack().borrow().position, self.target.unpack().borrow().position + dv, 0xffffff);
+            if (self.target.unpack().borrow().position - position()).length() > 1000.0 {
                 accelerate(50.0 * (dp + dv));
             } else {
                 accelerate(2.0 * (dp + dv));
@@ -148,7 +149,7 @@ pub struct RadarTrack {
     // resolved velocity estimate
     velocity: Vec2,
 
-    // velocity.y.atan2(velocity.x)
+    // velocity.y.atan2(velocity.x) in quadrant 1..
     heading: f64,
     
     // need to create a uuid
@@ -187,6 +188,11 @@ trait RadarTrackGeometry {
     fn check_gate(&mut self, point: Vec2) -> bool;
 
     fn distance_from(&self, point: Vec2) -> f64;
+
+    // returns x,y values as distance representation to target
+    fn get_target_direction(&self, point: Vec2) -> Vec2;
+    // returns closing speed to target in scalar m/s
+    fn get_closing_speed_to_target(&self) -> f64;
 }
 
 impl RadarTrackGeometry for RadarTrack {
@@ -240,6 +246,14 @@ impl RadarTrackGeometry for RadarTrack {
 
     fn distance_from(&self, point: Vec2) -> f64 {
         (self.position - point).length()
+    }
+
+    fn get_target_direction(&self, point: Vec2) -> Vec2 {
+        self.position - point
+    }
+
+    fn get_closing_speed_to_target(&self) -> f64 {
+        -((self.velocity - velocity()).dot(self.get_target_direction(position_fixed())) / self.distance_from(position_fixed()))
     }
 }
 
@@ -332,7 +346,19 @@ trait RadarTracker {
 
     fn get_closest_target_to_point(&self, point: Vec2) -> u128;
 
-    fn get_track(&self, id: u128) -> Rc<RefCell<RadarTrack>>;
+    fn get_track(&self, id: u128) -> Weak<RefCell<RadarTrack>>;
+
+    // tracks target currently set to Ship.target
+    fn lock_radar_to_target(&self, t: RadarTrack);
+    // performs a standard radar sweep
+    fn standard_radar_sweep(&mut self);
+    // performs a long range radar sweep
+    fn long_range_radar_sweep(&mut self);
+
+    // returns predicted Vec2 of target lead in seconds
+    fn get_target_lead(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2;
+    // returns predicted Vec2 of target lead in ticks
+    fn get_adjusted_target_lead_in_ticks(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2;
 }
 
 // impl against Radar struct to remove dependency on Ship
@@ -388,7 +414,7 @@ impl RadarTracker for Radar {
 
     // iterate over existing tracks and call their update method
     fn update_tracks(&mut self) {
-        for (id, track) in &self.potential_targets {
+        for (_id, track) in &self.potential_targets {
             track.borrow_mut().update();
         }
     }
@@ -407,8 +433,8 @@ impl RadarTracker for Radar {
         target_id
     }
 
-    fn get_track(&self, id: u128) -> Rc<RefCell<RadarTrack>> {
-        self.potential_targets.get(&id).unwrap().clone()
+    fn get_track(&self, id: u128) -> Weak<RefCell<RadarTrack>> {
+        Rc::downgrade(self.potential_targets.get(&id).unwrap())
     }
 
     fn add_detection_point(&mut self, plot: Option<ScanResult>) {
@@ -462,6 +488,55 @@ impl RadarTracker for Radar {
             }
         }
     }
+    
+    fn lock_radar_to_target(&self, t: RadarTrack) {
+        let t_dir = t.position - position_fixed();
+        let t_dist = t_dir.length();
+        set_radar_heading(t_dir.angle());
+
+
+        // focus radar on target
+        set_radar_width(PI / t_dist.log(2.0));
+        set_radar_max_distance(t_dist + (t_dist * 0.1));
+        set_radar_min_distance(t_dist - (t_dist * 0.3));
+    }
+
+
+
+
+    fn get_target_lead(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2 {
+        let delta_position = target_position - position_fixed();
+        let delta_velocity = target_velocity - velocity();
+        let prediction = delta_position + delta_velocity * delta_position.length() / BULLET_SPEED;
+        prediction
+    }
+
+    fn get_adjusted_target_lead_in_ticks(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2 {
+        let delta_position = target_position - position_fixed();
+        let delta_velocity = (target_velocity - velocity()) / 60.0; // divide down to ticks
+        let bullet_delta = BULLET_SPEED - target_velocity;
+        delta_position + delta_velocity * delta_position.length() / (bullet_delta / 60.0)
+    }
+
+    fn standard_radar_sweep(&mut self) {
+        // if we've been looking for a while, look harder
+        // if self.ticks_since_contact > 30 {
+        //     self.set_state(ShipState::OutOfRadarRange);
+        // }
+
+        set_radar_heading(radar_heading() + radar_width());
+        set_radar_width(PI / 4.0);
+        set_radar_max_distance(10_000.0);
+        set_radar_min_distance(25.0);
+    }
+
+    fn long_range_radar_sweep(&mut self) {
+        debug!("long range radar sweep");
+        set_radar_heading(radar_heading() + radar_width());
+        set_radar_width(PI / 8.0);
+        set_radar_max_distance(1_000_000.0);
+        set_radar_min_distance(25.0);
+    }
 }
 
 
@@ -477,7 +552,7 @@ pub struct Fighter {
     // does the ship have a target
     target_lock: bool,
 
-    target: Option<Rc<RefCell<RadarTrack>>>,
+    target: Option<Weak<RefCell<RadarTrack>>>,
 
     // current ship state
     state: ShipState,
@@ -520,28 +595,28 @@ trait FigherGeometry {
 
     fn basic_maneuver_to_target(&self);
 
-    fn set_current_target(&mut self, target: Rc<RefCell<RadarTrack>>);
+    fn set_current_target(&mut self, target: Weak<RefCell<RadarTrack>>);
 }
 
 impl FigherGeometry for Fighter {
     fn shoot(&self) {
-        if self.get_target_distance() < 1000.0 {
+        if self.target.unpack().borrow().distance_from(position_fixed()) < 1000.0 {
             fire(0);
         }
     }
     
     fn seconds_to_intercept(&self) -> f64 {
-        let delta_position = position_fixed() - self.target.as_ref().unwrap().borrow().position;
-        let _delta_velocity = velocity() - self.target.as_ref().unwrap().borrow().velocity;
+        let delta_position = position_fixed() - self.target.unpack().borrow().position;
+        let _delta_velocity = velocity() - self.target.unpack().borrow().velocity;
         delta_position.length() / velocity().length()
     }
 
     fn ticks_to_intercept(&self) -> f64 {
-        (position_fixed() - self.target.as_ref().unwrap().borrow().position).length() / ((velocity() / 60.0) - (self.target.as_ref().unwrap().borrow().velocity / 60.0)).length()
+        (position_fixed() - self.target.unpack().borrow().position).length() / ((velocity() / 60.0) - (self.target.unpack().borrow().velocity / 60.0)).length()
     }
 
     fn fly_to_target(&self) {
-        self.turn_to_lead_target(self.get_target_direction());
+        self.turn_to_lead_target(self.target.unpack().borrow().get_target_direction(position_fixed()));
     }
 
     // engage fighter geometry with target
@@ -551,13 +626,13 @@ impl FigherGeometry for Fighter {
 
             // TODO: still no idea which of these works best / least worst
             // let lead_point = quadratic_lead(self.target.as_ref().unwrap().borrow().position, self.target.as_ref().unwrap().borrow().velocity);
-            let lead_point = get_target_lead_in_ticks(self.target.as_ref().unwrap().borrow().position, self.target.as_ref().unwrap().borrow().velocity);
+            let lead_point = get_target_lead_in_ticks(self.target.unpack().borrow().position, self.target.unpack().borrow().velocity);
             // let lead_point = self.get_adjusted_target_lead_in_ticks(self.target.as_ref().unwrap().borrow().position, self.target.as_ref().unwrap().borrow().velocity);
-            draw_triangle(self.target.as_ref().unwrap().borrow().position, 50.0, 0x00ff00);
+            draw_triangle(self.target.unpack().borrow().position, 50.0, 0x00ff00);
             draw_line(position_fixed(), lead_point, 0xff00f0);
 
             // TODO: fighter is dumb and flies straight at target which usually wins in the fight
-            if self.get_target_distance() < 1000.0 {
+            if self.target.unpack().borrow().distance_from(position_fixed()) < 1000.0 {
                 self.turn_to_lead_target_aggressive(lead_point);
             } else {
                 self.fly_to_target();
@@ -565,7 +640,7 @@ impl FigherGeometry for Fighter {
         }
     }
 
-    fn set_current_target(&mut self, target: Rc<RefCell<RadarTrack>>) {
+    fn set_current_target(&mut self, target: Weak<RefCell<RadarTrack>>) {
         self.target = Some(target);
     }
 
@@ -611,10 +686,10 @@ impl FigherGeometry for Fighter {
         if self.target.is_none() {
             return;
         }
-        let contact_distance: f64 = self.get_target_distance();
-        let contact_direction: Vec2 = self.get_target_direction();
-        let contact_velocity: Vec2 = self.get_target_velocity();
-        let contact_position: Vec2 = self.get_target_position();
+        let contact_distance: f64 = self.target.unpack().borrow().distance_from(position_fixed());
+        let contact_direction: Vec2 = self.target.unpack().borrow().get_target_direction(position_fixed());
+        let contact_velocity: Vec2 = self.target.unpack().borrow().velocity;
+        let contact_position: Vec2 = self.target.unpack().borrow().position;
         let contact_future = contact_position + (contact_velocity);
         let contact_future_distance = (position_fixed() - contact_future).length();
         let mut target_distance_increasing = false;
@@ -636,10 +711,10 @@ impl FigherGeometry for Fighter {
 
         let normal_vec = contact_direction.normalize();
 
-        let relative_quadrant = self.get_target_position().get_relative_quadrant(position_fixed());
+        let relative_quadrant = contact_position.get_relative_quadrant(position_fixed());
         debug!("target in relative quadrant {:?}!", relative_quadrant);
 
-        let closing_speed = self.get_closing_speed_to_target();
+        let closing_speed = self.target.unpack().borrow().get_closing_speed_to_target();
 
         debug!("closing speed: {}", closing_speed);
 
@@ -907,151 +982,6 @@ impl Fighter {
                 self.set_current_target(track);
             }
         }
-        self.radar_control();
-    }
-}
-
-// better but still sucks
-fn iterative_approximation(target_position: Vec2, target_velocity: Vec2) -> Vec2 {
-    let mut t: f64 = 0.0;
-    let mut iterations = 10;
-    while iterations > 0 {
-        let old_t: f64 = t;
-        t = ((target_position - position_fixed()) + (t * target_velocity)).length() / BULLET_SPEED;
-        if t - old_t < E {
-            break;
-        }
-        iterations = iterations - 1;
-    }
-
-    return target_position + (t * target_velocity);
-}
-// discriminant is the part under the sqrt when solved for x
-// d = b^2-4ac
-fn get_smallest_quadratic_solution(a: f64, b: f64, c: f64) -> f64 {
-    let discriminant: f64 = (b * b) - (4.0 * a * c);
-
-    if discriminant < 0.0 {
-        return -1.0;
-    }
-
-    // solved for x: x = (-b +/- sqrt(b^2-4ac)) / 2a
-    // getting one or both x solutions from above
-    // only the positive solutions are useful
-    let s: f64 = discriminant.sqrt();
-    let x2: f64 = (-b + s) / (2.0 * a);
-    let x1: f64 = (-b - s) / (2.0 * a);
-    if x2 > 0.0 && x1 > 0.0 {
-        return x2.min(x1);
-    } else if x1 > 0.0 {
-        return x1;
-    } else if x2 > 0.0 {
-        return x2;
-    }
-    return -1.0; //no positive solution
-}
-
-trait RadarControl {
-    // main radar control loop
-    fn radar_control(&mut self);
-    // tracks target currently set to Ship.target
-    fn lock_radar_to_target(&self);
-    // performs a standard radar sweep
-    fn standard_radar_sweep(&mut self);
-    // performs a long range radar sweep
-    fn long_range_radar_sweep(&mut self);
-    // returns current target position
-    fn get_target_position(&self) -> Vec2;
-    // returns distance to target
-    fn get_target_distance(&self) -> f64;
-    // returns target velocity in x,y
-    fn get_target_velocity(&self) -> Vec2;
-    // returns x,y values as distance representation to target
-    fn get_target_direction(&self) -> Vec2;
-    // returns closing speed to target in scalar m/s
-    fn get_closing_speed_to_target(&self) -> f64;
-    // returns predicted Vec2 of target lead in seconds
-    fn get_target_lead(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2;
-    // returns predicted Vec2 of target lead in ticks
-    fn get_adjusted_target_lead_in_ticks(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2;
-}
-
-impl RadarControl for Fighter {
-    fn lock_radar_to_target(&self) {
-        if self.target_lock {
-            let target_distance = self.get_target_distance();
-            let radar_heading = (self.get_target_direction()).angle();
-            set_radar_heading(radar_heading);
-
-            // focus radar on target
-            set_radar_width(PI / target_distance.log(2.0));
-            set_radar_max_distance(target_distance + (target_distance * 0.1));
-            set_radar_min_distance(target_distance - (target_distance * 0.3));
-        }
-    }
-
-    fn radar_control(&mut self) {
-        match self.get_state() {
-            ShipState::NoTarget => self.standard_radar_sweep(),
-            ShipState::Searching => self.standard_radar_sweep(),
-            ShipState::Engaged => self.standard_radar_sweep(),
-            ShipState::OutOfTargetRange => self.standard_radar_sweep(),
-            ShipState::OutOfRadarRange => self.long_range_radar_sweep(),
-        }
-    }
-
-    fn get_target_position(&self) -> Vec2 {
-        self.target.as_ref().unwrap().borrow().position
-    }
-
-    fn get_target_distance(&self) -> f64 {
-        self.get_target_direction().length()
-    }
-
-    fn get_target_direction(&self) -> Vec2 {
-        self.target.as_ref().unwrap().borrow().position - position_fixed()
-    }
-
-    fn get_target_velocity(&self) -> Vec2 {
-        self.target.as_ref().unwrap().borrow().velocity
-    }
-
-    fn get_closing_speed_to_target(&self) -> f64 {
-        -((self.get_target_velocity() - velocity()).dot(self.get_target_direction()) / self.get_target_distance())
-    }
-
-    fn get_target_lead(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2 {
-        let delta_position = target_position - position_fixed();
-        let delta_velocity = target_velocity - velocity();
-        let prediction = delta_position + delta_velocity * delta_position.length() / BULLET_SPEED;
-        prediction
-    }
-
-    fn get_adjusted_target_lead_in_ticks(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2 {
-        let delta_position = target_position - position_fixed();
-        let delta_velocity = (target_velocity - velocity()) / 60.0; // divide down to ticks
-        let bullet_delta = BULLET_SPEED - target_velocity;
-        delta_position + delta_velocity * delta_position.length() / (bullet_delta / 60.0)
-    }
-
-    fn standard_radar_sweep(&mut self) {
-        // if we've been looking for a while, look harder
-        if self.radar.ticks_since_contact > 30 {
-            self.set_state(ShipState::OutOfRadarRange);
-        }
-
-        set_radar_heading(radar_heading() + radar_width());
-        set_radar_width(PI / 4.0);
-        set_radar_max_distance(10_000.0);
-        set_radar_min_distance(25.0);
-    }
-
-    fn long_range_radar_sweep(&mut self) {
-        debug!("long range radar sweep");
-        set_radar_heading(radar_heading() + radar_width());
-        set_radar_width(PI / 8.0);
-        set_radar_max_distance(1_000_000.0);
-        set_radar_min_distance(25.0);
     }
 }
 
@@ -1059,13 +989,22 @@ impl RadarControl for Fighter {
 // Slightly more solidified "library" code below
 //**************************************************************************
 
-#[derive(Debug)]
-enum Quadrant {
-    One = 1,
-    Two = 2,
-    Three = 3,
-    Four = 4,
+trait TargetUnwrapper {
+    fn unpack(&self) -> RefCell<RadarTrack>;
+    // fn track_mut(&self) -> &mut RadarTrack;
 }
+// trait used to provide ergonomic access to RadarTrack
+impl TargetUnwrapper for Option<Weak<RefCell<RadarTrack>>> {
+    fn unpack(&self) -> RefCell<RadarTrack> {
+        *self.unwrap().as_ptr()
+    }
+    // fn track_mut(&self) -> &RadarTrack {
+    //     &mut *Rc::get_mut(&mut self.as_ref().unwrap().upgrade().unwrap()).unwrap().borrow_mut()
+    // }
+}
+
+#[derive(Debug)]
+enum Quadrant {One = 1,Two = 2,Three = 3,Four = 4,}
 
 trait UnitCircleQuadrant {
     fn get_quadrant(&self) -> Quadrant;
@@ -1111,6 +1050,31 @@ fn get_target_lead_in_ticks(target_position: Vec2, target_velocity: Vec2) -> Vec
     delta_position + delta_velocity * delta_position.length() / (BULLET_SPEED / 60.0).ceil()
 }
 
+// discriminant is the part under the sqrt when solved for x
+// d = b^2-4ac
+fn get_smallest_quadratic_solution(a: f64, b: f64, c: f64) -> f64 {
+    let discriminant: f64 = (b * b) - (4.0 * a * c);
+
+    if discriminant < 0.0 {
+        return -1.0;
+    }
+
+    // solved for x: x = (-b +/- sqrt(b^2-4ac)) / 2a
+    // getting one or both x solutions from above
+    // only the positive solutions are useful
+    let s: f64 = discriminant.sqrt();
+    let x2: f64 = (-b + s) / (2.0 * a);
+    let x1: f64 = (-b - s) / (2.0 * a);
+    if x2 > 0.0 && x1 > 0.0 {
+        return x2.min(x1);
+    } else if x1 > 0.0 {
+        return x1;
+    } else if x2 > 0.0 {
+        return x2;
+    }
+    return -1.0; //no positive solution
+}
+
 // uses quadratic math from available info to produce useful lead vector
 // remember, quadratic formula is: ax^2+bx+c=0
 // solved for x: x = (-b +/- sqrt(b^2-4ac)) / 2a
@@ -1130,4 +1094,19 @@ fn quadratic_lead(target_position: Vec2, target_velocity: Vec2) -> Vec2 {
 // rotating adjusts base position(), this fixes that
 fn position_fixed() -> Vec2 {
     position() - vec2(1.0, 0.0).rotate(heading()) * 1.33333333
+}
+
+fn iterative_approximation(target_position: Vec2, target_velocity: Vec2) -> Vec2 {
+    let mut t: f64 = 0.0;
+    let mut iterations = 20;
+    while iterations > 0 {
+        let old_t: f64 = t;
+        t = ((target_position - position_fixed()) + (t * target_velocity)).length() / BULLET_SPEED;
+        if t - old_t < E {
+            break;
+        }
+        iterations = iterations - 1;
+    }
+
+    return target_position + (t * target_velocity);
 }
