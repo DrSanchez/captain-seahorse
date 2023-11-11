@@ -27,6 +27,8 @@ const BULLET_SPEED: f64 = 1000.0; // m/s
 const E: f64 = f64::EPSILON;
 const STICKY_TARGET_TICKS: u32 = 1;
 const MISSILE_STICKY_TARGET_TICKS: u32 = 60;
+const MISSILE_TARGET_HEADING_DELAY: u32 = 30;
+const MISSILE_ACCELERATION_DELAY: u32 = 30;
 
 pub enum Ship {
     Fighter(Fighter),
@@ -54,6 +56,8 @@ struct Missile {
     target: Option<Rc<RefCell<RadarTrack>>>,
     sticky_target_ticks: u32,
     radar: Radar,
+    target_heading_delay_ticks: u32,
+    acceleration_delay_ticks: u32,
 }
 
 impl Missile {
@@ -61,9 +65,13 @@ impl Missile {
         Missile {
             target: None,
             sticky_target_ticks: MISSILE_STICKY_TARGET_TICKS,
+            target_heading_delay_ticks: MISSILE_TARGET_HEADING_DELAY,
+            acceleration_delay_ticks: MISSILE_ACCELERATION_DELAY,
             radar: Radar {
                 name: "missile_radar".to_string(),
-                state: RadarState::StandardSweep,
+                beam: RadarBeam::Wide,
+                designated_target: None,
+                state: RadarState::MediumRange,
                 id_gen: 0,
                 potential_targets: HashMap::new(),
                 ticks_since_contact: 0,
@@ -71,12 +79,9 @@ impl Missile {
         }
     }
     pub fn tick(&mut self) {
-        // from initial tutorial hint
-        self.radar.standard_radar_sweep();
         self.radar.radar_loop();
 
         if self.radar.has_contacts() {
-
             // TODO: id handling needs improvements
             let mut id = 0;
 
@@ -88,22 +93,65 @@ impl Missile {
 
             if self.radar.still_tracking(id) {
                 self.target = Some(self.radar.get_track(id));
+
+                // TODO: loses radar signal and tracks invalid target
+                // self.radar.state = RadarState::TargetFocus;
             }
+            let contact_distance: f64 = self.target.as_ref().unwrap().as_ref().borrow().distance_from(position_fixed());
+            let contact_direction: Vec2 = self.target.as_ref().unwrap().as_ref().borrow().get_target_direction(position_fixed());
+            let contact_velocity: Vec2 = self.target.as_ref().unwrap().as_ref().borrow().velocity;
+            let contact_position: Vec2 = self.target.as_ref().unwrap().as_ref().borrow().position;
+            let contact_future = contact_position + (contact_velocity / 60.0);
+            let contact_future_distance = (position_fixed() - contact_future).length();
+            let mut dp;
+            // if self.target.as_ref().unwrap().as_ref().borrow().distance_from(position()) > 800.0 {
+            //     dp = get_target_lag_in_ticks(self.target.as_ref().unwrap().as_ref().borrow().position, self.target.as_ref().unwrap().as_ref().borrow().velocity);
+            // } else {
+                // dp = get_target_lead_in_ticks(self.target.as_ref().unwrap().as_ref().borrow().position, self.target.as_ref().unwrap().as_ref().borrow().velocity);
+            // }
 
-            let dp = get_target_lead_in_ticks(self.target.as_ref().unwrap().as_ref().borrow().position, self.target.as_ref().unwrap().as_ref().borrow().velocity);
-
-            // let dp = self.target.as_ref().unwrap().borrow().position - position();
+            dp = self.target.as_ref().unwrap().borrow().position - position();
             let dv = self.target.as_ref().unwrap().as_ref().borrow().velocity - velocity();
+
+            let heading_error = angle_diff(heading(), dp.angle());
+            draw_line(position(), 100.0*Vec2::new(heading().sin(), heading().cos()), 0xffffff);
+            debug!("heading.cos(): {}", heading().cos());
+            debug!("heading.sin(): {}", heading().sin());
+            match position().get_quadrant() {
+                Quadrant::One => { draw_line(position(), 100.0*Vec2::new(heading().cos(), heading().sin()), 0xff00ff); },
+                Quadrant::Two => { draw_line(position(), 100.0*Vec2::new(-heading().cos(), heading().sin()), 0xff00ff); },
+                Quadrant::Three => { draw_line(position(), 100.0*Vec2::new(-heading().cos(), -heading().sin()), 0xff00ff); },
+                Quadrant::Four => { draw_line(position(), 100.0*Vec2::new(heading().cos(), -heading().sin()), 0xff00ff); },
+            }
+            debug!("missile heading error: {}", heading_error);
+            debug!("dp.angle: {}", dp.angle());
+            debug!("angle between dp and contact_future: {}", angle_diff(dp.angle(), contact_future.angle()));
+            debug!("angle between heading() and dp: {}", angle_diff(heading(), dp.angle()));
+            debug!("angle between heading() and contact_future: {}", angle_diff(heading(), contact_future.angle()));
+            let current_diff = angle_diff(heading(), contact_future.angle());
             turn_to(dp.angle());
 
-            draw_line(position(), dp, 0xff0000);
+            draw_line(contact_position, dp, 0xff00ff);
+
             draw_line(self.target.as_ref().unwrap().as_ref().borrow().position, self.target.as_ref().unwrap().as_ref().borrow().position + dv, 0xffffff);
-            if (self.target.as_ref().unwrap().as_ref().borrow().position - position()).length() > 1000.0 {
-                accelerate(50.0 * (dp + dv));
+            if self.target_heading_delay_ticks > 0 {
+                self.target_heading_delay_ticks -= 1;
             } else {
-                accelerate(2.0 * (dp + dv));
+                // if self.acceleration_delay_ticks > 0 {
+                    if (self.target.as_ref().unwrap().as_ref().borrow().position - position()).length() > 1500.0 {
+                        // accelerate(50.0 * (contact_future));
+                        accelerate(50.0 * (dp + dv));
+                    } else {
+                        // accelerate((contact_future));
+                        accelerate((dp + dv));
+                    }
+                    self.acceleration_delay_ticks -= 1;
+                // } else {
+                    // self.target_heading_delay_ticks = MISSILE_TARGET_HEADING_DELAY;
+                    // self.acceleration_delay_ticks = MISSILE_ACCELERATION_DELAY;
+                // }
             }
-            if dp.length() < 20.0 {
+            if self.target.as_ref().unwrap().as_ref().borrow().distance_from(position()) < 17.5 {
                 explode();
             }
         }
@@ -326,20 +374,30 @@ pub struct Fighter {
 }
 
 enum RadarState {
-    StandardSweep,
-    WideSweep,
-    NarrowSweep,
+    ShortRange,
+    MediumRange,
+    LongRange,
     TargetFocus,
+}
+
+enum RadarBeam {
+    Focused,
+    Narrow,
+    Standard,
+    Wide,
 }
 
 pub struct Radar {
     // radar name, currently just for debugging
     name: String,
 
+    beam: RadarBeam,
     state: RadarState,
 
     // count ticks since contact to switch to extended radar sweep
     ticks_since_contact: u32,
+
+    designated_target: Option<u128>,
 
     // collect current target positions for time-based calculations
     potential_targets: HashMap<u128, Rc<RefCell<RadarTrack>>>,
@@ -372,17 +430,17 @@ trait RadarTracker {
 
     fn get_track(&self, id: u128) -> Rc<RefCell<RadarTrack>>;
 
-    // tracks target currently set to Ship.target
-    fn lock_radar_to_target(&self, t: RadarTrack);
-    // performs a standard radar sweep
-    fn standard_radar_sweep(&mut self);
-    // performs a long range radar sweep
-    fn long_range_radar_sweep(&mut self);
+    // locks radar to closest target
+    fn lock_radar_to_target(&self);
 
-    // returns predicted Vec2 of target lead in seconds
-    fn get_target_lead(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2;
-    // returns predicted Vec2 of target lead in ticks
-    fn get_adjusted_target_lead_in_ticks(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2;
+    fn set_beam_width(&self);
+
+    // short range radar sweep
+    fn short_range_sweep(&self);
+    // performs a standard radar sweep
+    fn standard_radar_sweep(&self);
+    // performs a long range radar sweep
+    fn long_range_radar_sweep(&self);
 }
 
 // impl against Radar struct to remove dependency on Ship
@@ -390,6 +448,15 @@ impl RadarTracker for Radar {
     fn radar_loop(&mut self) {
         self.update_tracks();
         self.show_tracks();
+        self.set_beam_width();
+
+        match self.state {
+            RadarState::ShortRange => {self.short_range_sweep();},
+            RadarState::MediumRange => {self.standard_radar_sweep();},
+            RadarState::LongRange => {self.long_range_radar_sweep();},
+            RadarState::TargetFocus => {self.lock_radar_to_target()},
+        }
+
         if let Some(plot) = scan() {
             self.add_detection_point(Some(plot));
         }
@@ -497,14 +564,16 @@ impl RadarTracker for Radar {
                 }
             }
             // clear out of date tracks
-            for i in &old_tracks {
-                self.potential_targets.remove(i);
-                debug!("targ bef len: {}", self.potential_targets.len());
-                debug!("removed target: {}", i);
-                debug!("targ after len: {}", self.potential_targets.len());
+            if old_tracks.len() > 0 {
+                for i in &old_tracks {
+                    self.potential_targets.remove(i);
+                    debug!("targ bef len: {}", self.potential_targets.len());
+                    debug!("removed target: {}", i);
+                    debug!("targ after len: {}", self.potential_targets.len());
 
+                }
+                old_tracks.clear();
             }
-            old_tracks.clear();
             if !found {
                 // new potential target discovered
                 debug!("new target discovered");
@@ -513,11 +582,11 @@ impl RadarTracker for Radar {
         }
     }
     
-    fn lock_radar_to_target(&self, t: RadarTrack) {
-        let t_dir = t.position - position_fixed();
+    fn lock_radar_to_target(&self) {
+        let t = self.potential_targets.get(&self.get_closest_target_to_point(position())).unwrap();
+        let t_dir = t.as_ref().borrow().position - position_fixed();
         let t_dist = t_dir.length();
         set_radar_heading(t_dir.angle());
-
 
         // focus radar on target
         set_radar_width(PI / t_dist.log(2.0));
@@ -527,37 +596,35 @@ impl RadarTracker for Radar {
 
 
 
-
-    fn get_target_lead(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2 {
-        let delta_position = target_position - position_fixed();
-        let delta_velocity = target_velocity - velocity();
-        let prediction = delta_position + delta_velocity * delta_position.length() / BULLET_SPEED;
-        prediction
+    fn set_beam_width(&self) {
+        match self.beam {
+            RadarBeam::Focused => { set_radar_width(PI / 32.0) },
+            RadarBeam::Narrow => { set_radar_width(PI / 8.0) },
+            RadarBeam::Standard => { set_radar_width(PI / 4.0) },
+            RadarBeam::Wide => { set_radar_width(PI / 2.0) },
+        }
     }
 
-    fn get_adjusted_target_lead_in_ticks(&self, target_position: Vec2, target_velocity: Vec2) -> Vec2 {
-        let delta_position = target_position - position_fixed();
-        let delta_velocity = (target_velocity - velocity()) / 60.0; // divide down to ticks
-        let bullet_delta = BULLET_SPEED - target_velocity;
-        delta_position + delta_velocity * delta_position.length() / (bullet_delta / 60.0)
+    fn short_range_sweep(&self) {
+        set_radar_heading(radar_heading() + radar_width());
+        set_radar_max_distance(10_000.0);
+        set_radar_min_distance(25.0);
     }
 
-    fn standard_radar_sweep(&mut self) {
-        // if we've been looking for a while, look harder
+    fn standard_radar_sweep(&self) {
+        // TODO: if we've been looking for a while, look harder
         // if self.ticks_since_contact > 30 {
         //     self.set_state(ShipState::OutOfRadarRange);
         // }
 
         set_radar_heading(radar_heading() + radar_width());
-        set_radar_width(PI / 4.0);
-        set_radar_max_distance(10_000.0);
+        set_radar_max_distance(50_000.0);
         set_radar_min_distance(25.0);
     }
 
-    fn long_range_radar_sweep(&mut self) {
+    fn long_range_radar_sweep(&self) {
         debug!("long range radar sweep");
         set_radar_heading(radar_heading() + radar_width());
-        set_radar_width(PI / 8.0);
         set_radar_max_distance(1_000_000.0);
         set_radar_min_distance(25.0);
     }
@@ -631,7 +698,7 @@ impl FigherGeometry for Fighter {
             let lead_point = get_target_lead_in_ticks(self.target.as_ref().unwrap().as_ref().borrow().position, self.target.as_ref().unwrap().as_ref().borrow().velocity);
             // let lead_point = self.get_adjusted_target_lead_in_ticks(self.target.as_ref().unwrap().borrow().position, self.target.as_ref().unwrap().borrow().velocity);
             draw_triangle(self.target.as_ref().unwrap().as_ref().borrow().position, 50.0, 0x00ff00);
-            draw_line(position_fixed(), lead_point, 0xff00f0);
+            // draw_line(position_fixed(), lead_point, 0xff00f0);
 
             // TODO: fighter is dumb and flies straight at target which usually wins in the fight
             if self.target.as_ref().unwrap().as_ref().borrow().distance_from(position_fixed()) < 1000.0 {
@@ -761,8 +828,10 @@ impl Fighter {
                 message_queue: VecDeque::new(),
             },
             radar: Radar {
-                state: RadarState::StandardSweep,
+                state: RadarState::MediumRange,
+                beam: RadarBeam::Standard,
                 name: "fighter_radar".to_string(),
+                designated_target: None,
                 ticks_since_contact: 0,
                 potential_targets: HashMap::new(),
                 id_gen: 0,
@@ -802,9 +871,11 @@ impl Fighter {
     pub fn engaging_target(&mut self) {
         debug!("engaging target");
 
-        // TODO: 
-        self.basic_maneuver_to_target();
-        self.engage_target();
+        // TODO:
+        if self.target.is_some() {
+            self.basic_maneuver_to_target();
+            self.engage_target();
+        }
 
         // TODO: broken stuff below
         // if self.get_target_distance() > 1000.0 {
@@ -940,17 +1011,17 @@ impl Fighter {
 
     pub fn tick(&mut self) {
         // TODO: cleanup some leftover math
-        let delta_velocity = target_velocity() - velocity();
-        let bullet_delta = delta_velocity - BULLET_SPEED;
-        debug!("bullet delta: {}", bullet_delta);
-        let ab = (target() - position_fixed()).length();
-        let cat = target() + target_velocity();
-        let bc = cat.length();
-        draw_line(position_fixed(), cat, 0x0000ff);
+        // let delta_velocity = target_velocity() - velocity();
+        // let bullet_delta = delta_velocity - BULLET_SPEED;
+        // debug!("bullet delta: {}", bullet_delta);
+        // let ab = (target() - position_fixed()).length();
+        // let cat = target() + target_velocity();
+        // let bc = cat.length();
+        // draw_line(position_fixed(), cat, 0x0000ff);
 
         // TODO: this seems to be quadrant dependant
-        let head = Vec2::new(heading().cos(), heading().sin());
-        draw_line(position_fixed(), head*1000.0, 0xff0000);
+        // let head = Vec2::new(heading().cos(), heading().sin());
+        // draw_line(position_fixed(), head*1000.0, 0xff0000);
 
         // self.snap_to_heading(cat.angle());
         // draw_line(position_fixed(), 69.0*Vec2::new(cat.angle().cos(), cat.angle().sin()), 0x0f0fff);
@@ -1024,6 +1095,13 @@ fn turn_to(target_heading: f64) {
     turn(10.0 * heading_error);
 }
 
+// returns a leading vec2 with coords one velocity tick behind target position
+fn get_target_lag_in_ticks(target_position: Vec2, target_velocity: Vec2) -> Vec2 {
+    let delta_position = target_position - position_fixed();
+    let delta_velocity = (target_velocity - velocity()) / 60.0; // divide down to ticks
+    delta_position - delta_velocity * delta_position.length() / (BULLET_SPEED / 60.0).ceil()
+}
+
 // returns a leading vec2 with coords one velocity tick ahead of target position
 fn get_target_lead_in_ticks(target_position: Vec2, target_velocity: Vec2) -> Vec2 {
     let delta_position = target_position - position_fixed();
@@ -1077,7 +1155,7 @@ fn position_fixed() -> Vec2 {
     position() - vec2(1.0, 0.0).rotate(heading()) * 1.33333333
 }
 
-fn iterative_approximation(target_position: Vec2, target_velocity: Vec2) -> Vec2 {
+fn iterative_approximation_gun(target_position: Vec2, target_velocity: Vec2) -> Vec2 {
     let mut t: f64 = 0.0;
     let mut iterations = 20;
     while iterations > 0 {
@@ -1090,4 +1168,18 @@ fn iterative_approximation(target_position: Vec2, target_velocity: Vec2) -> Vec2
     }
 
     return target_position + (t * target_velocity);
+}
+
+fn get_target_lead(target_position: Vec2, target_velocity: Vec2) -> Vec2 {
+    let delta_position = target_position - position_fixed();
+    let delta_velocity = target_velocity - velocity();
+    let prediction = delta_position + delta_velocity * delta_position.length() / BULLET_SPEED;
+    prediction
+}
+
+fn get_adjusted_target_lead_in_ticks_gun(target_position: Vec2, target_velocity: Vec2) -> Vec2 {
+    let delta_position = target_position - position_fixed();
+    let delta_velocity = (target_velocity - velocity()) / 60.0; // divide down to ticks
+    let bullet_delta = BULLET_SPEED - target_velocity;
+    delta_position + delta_velocity * delta_position.length() / (bullet_delta / 60.0)
 }
