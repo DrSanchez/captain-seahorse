@@ -22,7 +22,6 @@ use std::collections::VecDeque;
 use std::collections::HashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::rc::Weak;
 
 const BULLET_SPEED: f64 = 1000.0; // m/s
 const E: f64 = f64::EPSILON;
@@ -64,22 +63,16 @@ impl Missile {
             sticky_target_ticks: MISSILE_STICKY_TARGET_TICKS,
             radar: Radar {
                 name: "missile_radar".to_string(),
+                state: RadarState::StandardSweep,
                 id_gen: 0,
                 potential_targets: HashMap::new(),
                 ticks_since_contact: 0,
             }
         }
     }
-    pub fn standard_radar_sweep(&mut self) {
-        // if we've been looking for a while, look harder
-        set_radar_heading(radar_heading() + radar_width());
-        set_radar_width(PI / 4.0);
-        set_radar_max_distance(10_000.0);
-        set_radar_min_distance(25.0);
-    }
     pub fn tick(&mut self) {
         // from initial tutorial hint
-        self.standard_radar_sweep();
+        self.radar.standard_radar_sweep();
         self.radar.radar_loop();
 
         if self.radar.has_contacts() {
@@ -332,9 +325,18 @@ pub struct Fighter {
     // longitudinal_throttle
 }
 
+enum RadarState {
+    StandardSweep,
+    WideSweep,
+    NarrowSweep,
+    TargetFocus,
+}
+
 pub struct Radar {
     // radar name, currently just for debugging
     name: String,
+
+    state: RadarState,
 
     // count ticks since contact to switch to extended radar sweep
     ticks_since_contact: u32,
@@ -759,6 +761,7 @@ impl Fighter {
                 message_queue: VecDeque::new(),
             },
             radar: Radar {
+                state: RadarState::StandardSweep,
                 name: "fighter_radar".to_string(),
                 ticks_since_contact: 0,
                 potential_targets: HashMap::new(),
