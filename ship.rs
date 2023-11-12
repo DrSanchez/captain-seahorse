@@ -168,6 +168,12 @@ enum CombatState {
     Flee,
 }
 
+#[derive(Debug)]
+struct TimedScanResult {
+    scan: ScanResult,
+    tick: u32,
+}
+
 // RadarTrack is a specific item formulated by the radar tracker algorithm
 // it will be used to house revolving data for the object as well as
 // having useful derived data members
@@ -175,7 +181,7 @@ enum CombatState {
 pub struct RadarTrack {
     // list of scan results tracked for this item
     // these need to be parsed and filtered
-    scans: VecDeque<ScanResult>,
+    scans: VecDeque<TimedScanResult>,
 
     // resolved position estimate
     position: Vec2,
@@ -198,7 +204,7 @@ pub struct RadarTrack {
     // lifetime manager
     contact_tick: u32,
 
-
+    filter: Kalman,
 }
 
 // classifier to apply to a RadarTrack
@@ -215,7 +221,7 @@ enum TrackType {
 trait RadarTrackGeometry {
     fn heading(&self) -> f64;
 
-    fn push_plot(&mut self, plot: Option<ScanResult>);
+    fn push_plot(&mut self, plot: Option<TimedScanResult>);
 
     fn update(&mut self);
 
@@ -229,16 +235,88 @@ trait RadarTrackGeometry {
     fn get_closing_speed_to_target(&self) -> f64;
 }
 
+
+//****************************************************
+// Kalman filter workarea
+//****************************************************
+fn kalman() {
+    // is this the result?
+    // let mut state_transition_model;
+
+    // is this the scans vecdeque?
+    // let mut observation_model;
+
+    // let mut process_noise_covariance;
+
+    // let mut observation_noise_covariance;
+}
+
+// find mean of collection of values for covariance
+// return Vec2 of mean for both x and y components
+// TODO: can just use 
+// fn mean(v: , n: u32) -> Vec2 {
+//     let sum = 0.0;
+// }
+
+// find covariance (magic) of two sets of similar values?
+// TODO: can i just use ndarray/_stats module?
+// fn covariance() {
+
+// }
+
+#[derive(Debug)]
+struct Kalman {
+    //  state_transition_model;
+    //  observation_model;
+    //  process_noise_covariance;
+    //  observation_noise_covariance;
+}
+
+impl Kalman {
+    pub fn new() -> Self {
+        Kalman {
+
+        }
+    }
+
+    pub fn initialize() {
+        todo!();
+    }
+
+    pub fn update_covariance() {
+
+    }
+}
+
 impl RadarTrackGeometry for RadarTrack {
     fn heading(&self) -> f64 {
         self.velocity.y.atan2(self.velocity.x)
     }
 
-    fn push_plot(&mut self, plot: Option<ScanResult>) {
+    fn push_plot(&mut self, plot: Option<TimedScanResult>) {
         self.scans.push_back(plot.unwrap());
     }
 
     fn update(&mut self) {
+        //*******
+        // pseudo code for collecting many points of reference and running
+        // them through a kalman filter for processing an estimated result
+
+        if self.scans.is_empty() {
+            // initialize kalman loop
+            // self.filter.initialize();
+        } else {
+            // update estimate -> updated state estimates
+
+            // update covariance
+
+            // projection into k+1 space -> projected estimates (new position data?)
+        }
+
+
+        //*******
+
+        // basic update code processing one value at a time and dropping it
         if self.scans.is_empty() {
             // no new scans in queue, just update one tick of velocity
             debug!("using estimated velocity");
@@ -249,12 +327,12 @@ impl RadarTrackGeometry for RadarTrack {
                 debug!("one scans to consider for radartrack: {}", self.id);
                 // only one element front and back are the same here
                 let scan = self.scans.pop_front().unwrap();
-                debug!("scan position: {}", scan.position);
+                debug!("scan position: {}", scan.scan.position);
 
                 // cur_vel(t-1) - scan.vel(t) => delta_vel
                 // delta_vel needs to be in ticks as well / 2 ticks => 
                 let current_velocity_in_ticks = self.velocity  / 60.0;
-                let acceleration = (current_velocity_in_ticks - (scan.velocity / 60.0)) / 2.0;
+                let acceleration = (current_velocity_in_ticks - (scan.scan.velocity / 60.0)) / 2.0;
                 // ^^ acceleration should be in meters / second / tick (m/s/t)
                 // add velocity in ticks with new acceleration, mult*60.0 should convert back to meters / second
                 let new_velocity = (current_velocity_in_ticks + acceleration) * 60.0;
@@ -294,19 +372,13 @@ impl RadarTrackGeometry for RadarTrack {
 // defines a square field for a given radartrack
 #[derive(Debug)]
 pub struct RadarTrackGate {
-    // scalar value (in meters) for how big a window we think the position may be in
-    // determines corners from point
-    error_magnitude: f64,
-
     center: Vec2,
-
     radius: f64,
 }
 
 impl RadarTrackGate {
     pub fn new(point: Vec2, radius: f64) -> RadarTrackGate {
         RadarTrackGate {
-            error_magnitude: 10.0,
             center: point,
             radius,
         }
@@ -341,6 +413,10 @@ impl RadarTrackGate {
             return false;
         }
         true
+    }
+
+    pub fn update_radius(&mut self, radius: f64) {
+        self.radius = radius;
     }
 }
 
@@ -473,9 +549,9 @@ impl RadarTracker for Radar {
     }
 
     fn insert_new_potential_target(&mut self, plot: Option<ScanResult>) {
-        let mut scans: VecDeque<ScanResult> = VecDeque::new();
+        let mut scans: VecDeque<TimedScanResult> = VecDeque::new();
         debug!("insert_new_potential_target: new plot position: {}", plot.as_ref().unwrap().position);
-        scans.push_back(plot.clone().unwrap());
+        scans.push_back(TimedScanResult { tick: current_tick(), scan: ScanResult { ..plot.clone().unwrap() } });
         let id = self.new_id_gen();
         // populate initial RadarTrack with baseline values
         let track = Rc::new(RefCell::new(RadarTrack {
@@ -487,6 +563,7 @@ impl RadarTracker for Radar {
             class: TrackType::Tentative,
             gate: RadarTrackGate::new(plot.as_ref().unwrap().position, 50.0),
             contact_tick: current_tick(),
+            filter: Kalman { }
         }));
         self.potential_targets.insert(id, track);
     }
@@ -543,7 +620,8 @@ impl RadarTracker for Radar {
                     debug!("associating new plot with existing target");
                     found = true;
                     // update current track with new data
-                    t.push_plot(plot.clone());
+                    t.push_plot(Some(TimedScanResult { tick: current_tick(), scan: ScanResult { ..plot.clone().unwrap() } }));
+                    
                     t.update();
                 } else {
                     // check current track lifetime
@@ -698,6 +776,7 @@ impl FigherGeometry for Fighter {
             } else {
                 self.fly_to_target();
             }
+            fire(1);
         }
     }
 
@@ -1008,7 +1087,6 @@ impl Fighter {
                 _ => { self.set_state(ShipState::Engaged); }
             }
             
-            fire(1);
             if self.sticky_target_ticks > 0 {
                 debug!("sticky ticks remaining: {}", self.sticky_target_ticks);
                 self.sticky_target_ticks -= 1;
@@ -1158,7 +1236,7 @@ fn get_adjusted_target_lead_in_ticks_gun(target_position: Vec2, target_velocity:
 }
 
 // TODO: missile seek method
-pub fn seek(p: Vec2, v: Vec2) {
+fn seek(p: Vec2, v: Vec2) {
     let dp = p - position();
     let dv = v - velocity();
     let closing_speed = -(dp.y * dv.y - dp.x * dv.x).abs() / dp.length();
