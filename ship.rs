@@ -118,26 +118,19 @@ impl Missile {
             if self.target_heading_delay_ticks > 0 {
                 self.target_heading_delay_ticks -= 1;
             } else {
-                if velocity().length() < 250.0 {
-                    accelerate(2.0 * (dp + dv*4.0));
+                if contact_distance + velocity().length() > contact_distance {
+                    // getting further away
+                    accelerate(dp+dv);
+                } else {
+                    // getting closer, limit speed
+                    if velocity().length() < 200.0 {
+                        accelerate(2.0 * (dp + (dv*2.0)));
+                    }
                 }
             }
 
             draw_triangle(contact_future, 15.0, 0xff0000);
 
-                // if self.acceleration_delay_ticks > 0 {
-                    if (self.target.as_ref().unwrap().as_ref().borrow().position - position()).length() > 1500.0 {
-                        // accelerate(1.0 * (quad_lead+dv));
-                        // accelerate(0.5 * (dp + dv));
-                    } else {
-                        // accelerate((quad_lead+dv));
-                        accelerate((dp + dv));
-                    }
-                    self.acceleration_delay_ticks -= 1;
-                // } else {
-                    // self.target_heading_delay_ticks = MISSILE_TARGET_HEADING_DELAY;
-                    // self.acceleration_delay_ticks = MISSILE_ACCELERATION_DELAY;
-                // }
             if self.target.as_ref().unwrap().as_ref().borrow().distance_from(position()) < 15.0 {
                 explode();
             }
