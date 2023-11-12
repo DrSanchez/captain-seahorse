@@ -1,3 +1,5 @@
+// Tutorial: Squadron
+// Destroy the enemy ships. They now shoot back.
 // Tutorial: Missiles
 // Destroy the enemy ship with your missiles.
 // Hint: https://en.wikipedia.org/wiki/Proportional_navigation
@@ -105,30 +107,36 @@ impl Missile {
             let contact_future = contact_position + (contact_velocity / 60.0);
 
             let dp = contact_position - position();
-            let dv = contact_velocity / 60.0 - velocity() / 60.0;
+            let dv = contact_velocity - velocity();
+
+            let targ_range = contact_position - position();
+            let targ_rel_v = contact_velocity - velocity();
+
+            draw_line(position(), targ_range, 0xff0000);
 
             let heading_error = angle_diff(heading(), dp.angle());
             
             let heading_error = angle_diff(heading(), dp.angle());
-            turn(42.0 * heading_error);
+            // turn(42.0 * heading_error);
 
             draw_line(contact_position, contact_position+dv*4.0, 0xffffff);
 
             debug!("velocity.length: {}",velocity().length());
-            if self.target_heading_delay_ticks > 0 {
-                self.target_heading_delay_ticks -= 1;
-            } else {
-                if contact_distance + velocity().length() > contact_distance {
-                    // getting further away
-                    accelerate(dp+dv);
-                } else {
-                    // getting closer, limit speed
-                    if velocity().length() < 200.0 {
-                        accelerate(2.0 * (dp + (dv*2.0)));
-                    }
-                }
-            }
+            // if self.target_heading_delay_ticks > 0 {
+            //     self.target_heading_delay_ticks -= 1;
+            // } else {
+            //     if contact_distance + velocity().length() > contact_distance {
+            //         // getting further away
+            //         accelerate(dp+dv);
+            //     } else {
+            //         // getting closer, limit speed
+            //         if velocity().length() < 200.0 {
+            //             accelerate(2.0 * (dp + (dv*2.0)));
+            //         }
+            //     }
+            // }
 
+            seek(contact_position, contact_velocity);
             draw_triangle(contact_future, 15.0, 0xff0000);
 
             if self.target.as_ref().unwrap().as_ref().borrow().distance_from(position()) < 15.0 {
@@ -1147,4 +1155,19 @@ fn get_adjusted_target_lead_in_ticks_gun(target_position: Vec2, target_velocity:
     let delta_velocity = (target_velocity - velocity()) / 60.0; // divide down to ticks
     let bullet_delta = BULLET_SPEED - target_velocity;
     delta_position + delta_velocity * delta_position.length() / (bullet_delta / 60.0)
+}
+
+// TODO: missile seek method
+pub fn seek(p: Vec2, v: Vec2) {
+    let dp = p - position();
+    let dv = v - velocity();
+    let closing_speed = -(dp.y * dv.y - dp.x * dv.x).abs() / dp.length();
+    let los = dp.angle();
+    let los_rate = (dp.y * dv.x - dp.x * dv.y) / (dp.length() * dp.length());
+
+    const N: f64 = 4.0;
+    let a = vec2(100.0, N * closing_speed * los_rate).rotate(los);
+    let a = vec2(400.0, 0.0).rotate(a.angle());
+    accelerate(a);
+    turn_to(a.angle());
 }
