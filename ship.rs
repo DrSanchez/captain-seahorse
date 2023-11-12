@@ -85,6 +85,7 @@ impl Missile {
             // TODO: id handling needs improvements
             let mut id = 0;
 
+            self.radar.beam = RadarBeam::Narrow;
             if self.sticky_target_ticks <= 0 {
                 id = self.radar.get_closest_target_to_point(position());
             } else {
@@ -102,47 +103,34 @@ impl Missile {
             let contact_velocity: Vec2 = self.target.as_ref().unwrap().as_ref().borrow().velocity;
             let contact_position: Vec2 = self.target.as_ref().unwrap().as_ref().borrow().position;
             let contact_future = contact_position + (contact_velocity / 60.0);
-            let contact_future_distance = (position_fixed() - contact_future).length();
-            let mut dp;
-            // if self.target.as_ref().unwrap().as_ref().borrow().distance_from(position()) > 800.0 {
-            //     dp = get_target_lag_in_ticks(self.target.as_ref().unwrap().as_ref().borrow().position, self.target.as_ref().unwrap().as_ref().borrow().velocity);
-            // } else {
-                // dp = get_target_lead_in_ticks(self.target.as_ref().unwrap().as_ref().borrow().position, self.target.as_ref().unwrap().as_ref().borrow().velocity);
-            // }
 
-            dp = self.target.as_ref().unwrap().borrow().position - position();
-            let dv = self.target.as_ref().unwrap().as_ref().borrow().velocity - velocity();
+            let dp = contact_position - position();
+            let dv = contact_velocity / 60.0 - velocity() / 60.0;
 
             let heading_error = angle_diff(heading(), dp.angle());
-            draw_line(position(), 100.0*Vec2::new(heading().sin(), heading().cos()), 0xffffff);
-            debug!("heading.cos(): {}", heading().cos());
-            debug!("heading.sin(): {}", heading().sin());
-            match position().get_quadrant() {
-                Quadrant::One => { draw_line(position(), 100.0*Vec2::new(heading().cos(), heading().sin()), 0xff00ff); },
-                Quadrant::Two => { draw_line(position(), 100.0*Vec2::new(-heading().cos(), heading().sin()), 0xff00ff); },
-                Quadrant::Three => { draw_line(position(), 100.0*Vec2::new(-heading().cos(), -heading().sin()), 0xff00ff); },
-                Quadrant::Four => { draw_line(position(), 100.0*Vec2::new(heading().cos(), -heading().sin()), 0xff00ff); },
-            }
-            debug!("missile heading error: {}", heading_error);
-            debug!("dp.angle: {}", dp.angle());
-            debug!("angle between dp and contact_future: {}", angle_diff(dp.angle(), contact_future.angle()));
-            debug!("angle between heading() and dp: {}", angle_diff(heading(), dp.angle()));
-            debug!("angle between heading() and contact_future: {}", angle_diff(heading(), contact_future.angle()));
-            let current_diff = angle_diff(heading(), contact_future.angle());
-            turn_to(dp.angle());
+            
+            let heading_error = angle_diff(heading(), dp.angle());
+            turn(42.0 * heading_error);
 
-            draw_line(contact_position, dp, 0xff00ff);
+            draw_line(contact_position, contact_position+dv*4.0, 0xffffff);
 
-            draw_line(self.target.as_ref().unwrap().as_ref().borrow().position, self.target.as_ref().unwrap().as_ref().borrow().position + dv, 0xffffff);
+            debug!("velocity.length: {}",velocity().length());
             if self.target_heading_delay_ticks > 0 {
                 self.target_heading_delay_ticks -= 1;
             } else {
+                if velocity().length() < 250.0 {
+                    accelerate(2.0 * (dp + dv*4.0));
+                }
+            }
+
+            draw_triangle(contact_future, 15.0, 0xff0000);
+
                 // if self.acceleration_delay_ticks > 0 {
                     if (self.target.as_ref().unwrap().as_ref().borrow().position - position()).length() > 1500.0 {
-                        // accelerate(50.0 * (contact_future));
-                        accelerate(50.0 * (dp + dv));
+                        // accelerate(1.0 * (quad_lead+dv));
+                        // accelerate(0.5 * (dp + dv));
                     } else {
-                        // accelerate((contact_future));
+                        // accelerate((quad_lead+dv));
                         accelerate((dp + dv));
                     }
                     self.acceleration_delay_ticks -= 1;
@@ -150,10 +138,15 @@ impl Missile {
                     // self.target_heading_delay_ticks = MISSILE_TARGET_HEADING_DELAY;
                     // self.acceleration_delay_ticks = MISSILE_ACCELERATION_DELAY;
                 // }
-            }
-            if self.target.as_ref().unwrap().as_ref().borrow().distance_from(position()) < 17.5 {
+            if self.target.as_ref().unwrap().as_ref().borrow().distance_from(position()) < 15.0 {
                 explode();
             }
+            if fuel() <= 0.0 {
+                // out of fuel, missile dud
+                explode();
+            }
+        } else {
+            self.radar.beam = RadarBeam::Wide;
         }
     }
 }
@@ -594,8 +587,6 @@ impl RadarTracker for Radar {
         set_radar_min_distance(t_dist - (t_dist * 0.3));
     }
 
-
-
     fn set_beam_width(&self) {
         match self.beam {
             RadarBeam::Focused => { set_radar_width(PI / 32.0) },
@@ -764,8 +755,6 @@ impl FigherGeometry for Fighter {
 
         let tti = self.seconds_to_intercept();
         debug!("time to intercept: {}", tti);
-
-        draw_line(position_fixed(), contact_future, 0xff0000);
 
         if contact_future_distance > contact_distance {
             // target moving relatively away
@@ -1010,23 +999,6 @@ impl Fighter {
     }
 
     pub fn tick(&mut self) {
-        // TODO: cleanup some leftover math
-        // let delta_velocity = target_velocity() - velocity();
-        // let bullet_delta = delta_velocity - BULLET_SPEED;
-        // debug!("bullet delta: {}", bullet_delta);
-        // let ab = (target() - position_fixed()).length();
-        // let cat = target() + target_velocity();
-        // let bc = cat.length();
-        // draw_line(position_fixed(), cat, 0x0000ff);
-
-        // TODO: this seems to be quadrant dependant
-        // let head = Vec2::new(heading().cos(), heading().sin());
-        // draw_line(position_fixed(), head*1000.0, 0xff0000);
-
-        // self.snap_to_heading(cat.angle());
-        // draw_line(position_fixed(), 69.0*Vec2::new(cat.angle().cos(), cat.angle().sin()), 0x0f0fff);
-        // turn(270.0 * angle_diff(heading(), cat.angle()));
-        
         self.radar.radar_loop();
         self.ship_control();
         if self.radar.has_contacts() {
