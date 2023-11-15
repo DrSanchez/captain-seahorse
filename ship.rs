@@ -31,10 +31,12 @@ const STICKY_TARGET_TICKS: u32 = 1;
 const MISSILE_STICKY_TARGET_TICKS: u32 = 60;
 const MISSILE_TARGET_HEADING_DELAY: u32 = 30;
 const MISSILE_ACCELERATION_DELAY: u32 = 30;
+const CHANNEL_SANCHEZ: u8 = 7;
 
 pub enum Ship {
     Fighter(Fighter),
     Missile(Missile),
+    Frigate(Frigate),
 }
 
 // game loop router
@@ -43,21 +45,60 @@ impl Ship {
         match class() {
             Class::Fighter => Ship::Fighter(Fighter::new()),
             Class::Missile => Ship::Missile(Missile::new()),
+            Class::Frigate => Ship::Frigate(Frigate::new()),
             _ => { todo!() },//TODO: future stuff
         }
     }
     pub fn tick(&mut self) {
         match self {
             Ship::Fighter(fighter) => { fighter.tick() },
-            Ship::Missile(missile) => { missile.tick() }
+            Ship::Missile(missile) => { missile.tick() },
+            Ship::Frigate(frigate) => { frigate.tick() },
         }
     }
+}
+
+pub struct Frigate {
+    target: Option<Rc<RefCell<RadarTrack>>>,
+    radar: Radar,
+    radio: Radio,
+}
+
+impl Frigate {
+    pub fn new() -> Self {
+        Frigate {
+            target: None,
+            radar: Radar {
+                name: "frigate_radar".to_string(),
+                beam: RadarBeam::Narrow,
+                designated_target: None,
+                state: RadarState::LongRange,
+                id_gen: 0,
+                potential_targets: HashMap::new(),
+                ticks_since_contact: 0,
+            },
+            radio: Radio {
+                current_channel: CHANNEL_SANCHEZ,
+            }
+        }
+    }
+
+    pub fn tick(&mut self) {
+        self.radar.radar_loop();
+        debug!("frigate is alive!");
+    }
+}
+
+pub struct Radio {
+    // current radio channel
+    current_channel: u8,
 }
 
 pub struct Missile {
     target: Option<Rc<RefCell<RadarTrack>>>,
     sticky_target_ticks: u32,
     radar: Radar,
+    radio: Radio,
     target_heading_delay_ticks: u32,
     acceleration_delay_ticks: u32,
 }
@@ -77,6 +118,9 @@ impl Missile {
                 id_gen: 0,
                 potential_targets: HashMap::new(),
                 ticks_since_contact: 0,
+            },
+            radio: Radio {
+                current_channel: CHANNEL_SANCHEZ,
             }
         }
     }
@@ -701,15 +745,6 @@ impl RadarTracker for Radar {
 }
 
 
-pub struct Radio {
-    // current radio channel
-    current_channel: u8,
-
-    // queue of messages to process
-    message_queue: VecDeque<String>,
-}
-
-
 pub struct Rotator {
     // current movement estimated ticks to accomplish desired rotation
     estimated_ticks_to_angle: u32,
@@ -899,8 +934,7 @@ impl Fighter {
             target: None,
             state: ShipState::NoTarget,
             radio: Radio {
-                current_channel: 0,
-                message_queue: VecDeque::new(),
+                current_channel: CHANNEL_SANCHEZ,
             },
             radar: Radar {
                 state: RadarState::MediumRange,
