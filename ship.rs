@@ -739,7 +739,7 @@ trait FigherGeometry {
 
 impl FigherGeometry for Fighter {
     fn shoot(&self) {
-        if self.target.as_ref().unwrap().as_ref().borrow().distance_from(position_fixed()) < 1000.0 {
+        if self.target.as_ref().unwrap().as_ref().borrow().distance_from(position_fixed()) < 2000.0 {
             fire(0);
         }
     }
@@ -846,7 +846,7 @@ impl FigherGeometry for Fighter {
             target_distance_increasing = false;
         }
 
-        let normal_vec = contact_direction.normalize();
+        let unit_dir = contact_direction.normalize();
 
         let relative_quadrant = contact_position.get_relative_quadrant(position_fixed());
         debug!("target in relative quadrant {:?}!", relative_quadrant);
@@ -859,6 +859,12 @@ impl FigherGeometry for Fighter {
         debug!("time to stop: {}", time_to_stop);
         debug!("time to stop in ticks: {}", (time_to_stop * 60.0).ceil());
 
+        let normal_vec_y = Vec2::new(-contact_direction.x, contact_direction.y);
+        let normal_vec_x = Vec2::new(contact_direction.x, -contact_direction.y);
+ 
+        draw_line(position(), normal_vec_y, 0xff0000);
+        draw_line(position(), normal_vec_x, 0xff0000);
+
         if time_to_stop < tti {
             // time to stop less than time to intercept, keep going!
             // handle fighter moves based on distance to target
@@ -866,9 +872,9 @@ impl FigherGeometry for Fighter {
             if contact_distance < 500.0 {
                 // close to target, just float, probably needs to be smarter here
                 if target_distance_increasing {
-                    accelerate(10.0 * normal_vec);
+                    accelerate(10.0 * unit_dir);
                 } else {
-                    accelerate(-10.0 * normal_vec);
+                    accelerate(-10.0 * unit_dir);
                 }
             } else if contact_distance > 500.0 && contact_distance < 1000.0 {
                 // attempts to match contact motion for combat engagement
@@ -877,7 +883,7 @@ impl FigherGeometry for Fighter {
                 // refactored math from target_position - position to pre-calc'd variable of the same
                 // need to change to a unit vector in the direction of the target to accelerate
                 // back into optimal combat range
-                accelerate(100.0 * normal_vec);
+                accelerate(100.0 * unit_dir);
             }
         } else {
             // need to figure out how to slow down here
@@ -1079,6 +1085,9 @@ impl Fighter {
     }
 
     pub fn tick(&mut self) {
+        // uncomment for squadron tutorial 11 for wall of bullets
+        // TODO: figure out how to use this strategically
+        // fire(0);
         self.radar.radar_loop();
         self.ship_control();
         if self.radar.has_contacts() {
