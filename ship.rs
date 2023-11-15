@@ -54,7 +54,7 @@ impl Ship {
     }
 }
 
-struct Missile {
+pub struct Missile {
     target: Option<Rc<RefCell<RadarTrack>>>,
     sticky_target_ticks: u32,
     radar: Radar,
@@ -153,7 +153,7 @@ impl Missile {
 }
 
 // used to drive general ship behavior
-enum ShipState {
+pub enum ShipState {
     NoTarget,
     Searching,
     Engaged,
@@ -162,14 +162,14 @@ enum ShipState {
 }
 
 // used to drive engaged state behavior
-enum CombatState {
+pub enum CombatState {
     Attack,
     Evade,
     Flee,
 }
 
 #[derive(Debug)]
-struct TimedScanResult {
+pub struct TimedScanResult {
     scan: ScanResult,
     tick: u32,
 }
